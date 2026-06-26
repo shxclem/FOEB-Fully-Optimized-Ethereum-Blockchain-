@@ -1,0 +1,23 @@
+{
+  "name": "foeb",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.1.0"
+  },
+  "dependencies": {
+    "@ethereumjs/common": "^10.1.2",
+    "@ethereumjs/tx": "^10.1.2",
+    "eth-crypto": "^4.1.0",
+    "ethers": "^6.17.0",
+    "micro-eth-signer": "^0.19.0",
+    "viem": "^2.53.1",
+    "vite-plugin-node-polyfills": "^0.28.0"
+  }
+}
