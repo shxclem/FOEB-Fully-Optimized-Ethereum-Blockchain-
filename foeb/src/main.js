@@ -5,7 +5,7 @@ import { sepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
 import { KZG as microEthKZG } from "micro-eth-signer/kzg";
-import { trustedSetup } from "@paulmillr/trusted-setups/fast.js";
+import { trustedSetup } from "@paulmillr/trusted-setups/fast-kzg.js";
 import { createBlob4844Tx } from "@ethereumjs/tx";
 import { Common, Sepolia, Hardfork } from "@ethereumjs/common";
 import { bytesToHex, hexToBytes } from "@ethereumjs/util";
@@ -54,7 +54,7 @@ const viewReceive = document.getElementById("viewReceive");
 
 // INITIALIZING THE PROVIDER AND SIGNER FOR INTERACTING WITH THE ETHEREUM NETWORK
 // Provider on read-only mode to interact with blobkchain without wallet connection
-const provider = new ethers.providers.JsonRpcProvider(rpcURL);
+const provider = new ethers.JsonRpcProvider(rpcURL);
 
 // Check if MetaMask is installed
 if (!window.ethereum) {
@@ -518,7 +518,7 @@ async function sendBlobToContractViem() {
   const signedTx = tx.sign(pk);
 
   // Serializing the signed transaction to a hex string
-  const serialized = signedTx.serializeNetworkWrapper();
+  const serialized = signedTx.serialize();
 
   console.log ("Serialized transaction:", bytesToHex(serialized));
 
