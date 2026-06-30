@@ -1,73 +1,83 @@
-<div class="container">
-  <h1>Messaging prototype with blobs</h1>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fully Optimized Ethereum Blockchain</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script src="./src/main.js" type="module"></script>
+  </head>
 
-  <!-- Text field with info about the connected account -->
-  <label for="accountInfo">Connected account address:</label>
-  <input
-    id="accountInfo"
-    type="text"
-    readonly
-    placeholder="Connect MetaMask to see your address"
-  />
+  <body>
+    <div class="container">
+      <h1>Messaging prototype with blobs</h1>
 
-  <label for="privateKeyInput">Private key. <span class="important"></span>Important: hexadecimal format, starting with 0x</span></label>
-  <input 
-    id="privateKeyInput"
-    type="text"
-    placeholder="Private key (required to send blobs)"
-  />
+      <!-- Text field with info about the connected account -->
+      <label for="accountInfo">Connected account address:</label>
+      <input
+        id="accountInfo"
+        type="text"
+        readonly
+        placeholder="Connect MetaMask to see your address"
+      />
 
-  <div class="tabs">
-    <button id="tabSend" class="tab active">Send</button>
-    <button id="tabReceive" class="tab">Receive</button>
-  </div>
+      <label for="privateKeyInput">Private key. <span class="important"></span>Important: hexadecimal format, starting with 0x</span></label>
+      <input 
+        id="privateKeyInput"
+        type="text"
+        placeholder="Private key (required to send blobs)"
+      />
 
-  <div id="viewSend" class="tabview active">
-    <!-- Your current send form goes here -->
-    <h1>Send</h1>
+      <div class="tabs">
+        <button id="tabSend" class="tab active">Send</button>
+        <button id="tabReceive" class="tab">Receive</button>
+      </div>
 
-    <!-- Input for address -->
-    <label for="receiver">Enter recipient address:</label>
-    <input id="receiver" type="text" placeholder="Enter an address" />
+      <div id="viewSend" class="tabview active">
+        <!-- Your current send form goes here -->
+        <h1>Send</h1>
 
-    <!-- Input for blob content -->
-    <label for="blobContent">Blob content:</label>
-    <textarea
-      id="blobContent"
-      placeholder="Write the blob content"
-    ></textarea>
+        <!-- Input for address -->
+        <label for="receiver">Enter recipient address:</label>
+        <input id="receiver" type="text" placeholder="Enter an address" />
 
-    <!-- Checkbox to encrypt the message -->
-    <div class="checkbox-container">
-      <label for="encryptMessage">Encrypt the message? <br><br>
-        Note: requires the recipient to have previously sent a message</label>
+        <!-- Input for blob content -->
+        <label for="blobContent">Blob content:</label>
+        <textarea
+          id="blobContent"
+          placeholder="Write the blob content"
+        ></textarea>
+
+        <!-- Checkbox to encrypt the message -->
+        <div class="checkbox-container">
+          <label for="encryptMessage">Encrypt the message? <br><br>
+            Note: requires the recipient to have previously sent a message</label>
+            <br>
+          <input id="encryptMessage" type="checkbox" />
+        </div>
         <br>
-      <input id="encryptMessage" type="checkbox" />
+
+        <!-- Send button -->
+        <button id="sendBlob">Send Message</button>
+
+        <!-- Connect MetaMask button -->
+        <button id="connectMetaMask">Connect MetaMask</button>
+      </div>
+
+      <div id="viewReceive" class="tabview">
+        <!-- New receiving view -->
+        <h2>Blob reception</h2>
+
+        Recipient address (optional):
+        <input id="receiverFilter" placeholder="Filter by recipient address" />
+
+        Sender address (optional):
+        <input id="senderFilter" placeholder="Filter by sender address" />
+
+        <button id="viewEvents">View all messages</button>
+        <button id="searchEvents">Filter messages</button>
+
+        <div id="receivedBlobs"></div>
+      </div>
     </div>
-    <br>
-
-    <!-- Send button -->
-    <button id="sendBlob">Send Message</button>
-
-    <!-- Connect MetaMask button -->
-    <button id="connectMetaMask">Connect MetaMask</button>
-  </div>
-
-  <div id="viewReceive" class="tabview">
-    <!-- New receiving view -->
-    <h2>Blob reception</h2>
-
-    Recipient address (optional):
-    <input id="receiverFilter" placeholder="Filter by recipient address" />
-
-    Sender address (optional):
-    <input id="senderFilter" placeholder="Filter by sender address" />
-
-    <button id="viewEvents">View all messages</button>
-    <button id="searchEvents">Filter messages</button>
-
-    <div id="receivedBlobs"></div>
-  </div>
-</div>
-
-<script src="./src/main.js" type="module"></script>
+  </body>
+</html>

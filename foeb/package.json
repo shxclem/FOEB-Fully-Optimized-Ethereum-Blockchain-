@@ -12,14 +12,9 @@
     "vite": "^8.1.0"
   },
   "dependencies": {
-    "@ethereumjs/common": "^10.1.2",
-    "@ethereumjs/tx": "^10.1.2",
-    "@paulmillr/trusted-setups": "^0.3.0",
     "eth-crypto": "^4.1.0",
     "ethers": "^6.17.0",
     "kzg-wasm": "^1.0.0",
-    "micro-eth-signer": "^0.13.0",
-    "viem": "^2.53.1",
     "vite-plugin-node-polyfills": "^0.28.0"
   }
 }
