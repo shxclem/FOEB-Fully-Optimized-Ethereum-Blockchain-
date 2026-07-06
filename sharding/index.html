@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sharding DApp</title>
+    <link rel="stylesheet" href="./src/styles.css">
+  </head>
+
+  <body>
+
+    <div class="container">
+      <h1>Prototipo de mensajería con blobs</h1>
+
+      <!-- Cuadro de texto con info sobre la cuenta conectada -->
+      <label for="accountInfo">Dirección de la cuenta conectada:</label>
+      <input
+        id="accountInfo"
+        type="text"
+        readonly
+        placeholder="Conecta MetaMask para ver tu address"
+      />
+      <label for="privateKeyInput">Clave privada. <span class="important"></span>Importante: formato hexadecimal, con 0x al inicio</span></label>
+      <input 
+        id="privateKeyInput"
+        type="text"
+        placeholder="Private key (necesaria para enviar blobs)"
+      />
+ 
+      <div class="tabs">
+        <button id="tabSend" class="tab active">Enviar</button>
+        <button id="tabReceive" class="tab">Recibir</button>
+      </div>
+      <div id="viewSend" class="tabview active">
+        <!-- Aquí va tu formulario de envío actual -->
+        <h1>Envío</h1>
+
+        <!-- Input para el address -->
+        <label for="receiver">Introduce el address del receptor:</label>
+        <input id="receiver" type="text" placeholder="Introduce un address" />
+
+        <!-- Input para el contenido del blob -->
+        <label for="blobContent">Contenido del blob:</label>
+        <textarea
+          id="blobContent"
+          placeholder="Escribe el contenido del blob"
+        ></textarea>
+
+        <!-- Checkbox para encriptar el mensaje -->
+        <div class="checkbox-container">
+          <label for="encryptMessage">¿Encriptar el mensaje? <br><br>
+            Nota: requiere que el destinatario haya enviado un mensaje previamente</label>
+            <br>
+          <input id="encryptMessage" type="checkbox" />
+        </div>
+        <br>
+        <!-- Botón para enviar -->
+        <button id="sendBlob">Enviar Mensaje</button>
+
+        <!-- Botón para conectar a MetaMask -->
+        <button id="connectMetamask">Conectar Metamask</button>
+      </div>
+      <div id="viewReceive" class="tabview">
+        <!-- Aquí va la nueva vista de recepción -->
+        <h2>Recepción de blobs</h2>
+        Dirección del receptor (opcional):
+        <input id="receiverFilter" placeholder="Filtra por dirección del receptor" />
+        Dirección del emisor (opcional):
+        <input id="senderFilter" placeholder="Filtra por dirección del emisor" />
+        <button id="viewEvents">Ver todos los mensajes</button>
+        <button id="searchEvents">Filtrar mensajes</button>
+
+        <div id="receivedBlobs"></div>
+      </div>
+    </div>
+
+    <script src="./src/app.js" type="module"></script>
+
+    <script type="module">
+      import { loadKZG } from 'kzg-wasm'
+    </script>
+  </body>
+</html>
