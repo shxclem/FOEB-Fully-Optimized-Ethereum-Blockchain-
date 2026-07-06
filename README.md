@@ -1,4 +1,4 @@
-# FOEB-Fully-Optimized-Ethereum-Blockchain
+# FOEB (Fully Optimized Ethereum Blockchain)
 
 ## Contexte
 Ce dépôt constitue l'ensemble d'un travail de recherche réalisé par Clément DURÉCU dans le cadre d'un stage de cinq mois qui s'est déroulé à la DVHE (De Vinci Higher Education) et encadré par l'enseignant-chercheur Kenza RIAHI.
