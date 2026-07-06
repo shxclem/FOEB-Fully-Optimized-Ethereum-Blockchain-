@@ -9,65 +9,65 @@
   <body>
 
     <div class="container">
-      <h1>Prototipo de mensajería con blobs</h1>
+      <h1>Blob messaging prototype</h1>
 
-      <!-- Cuadro de texto con info sobre la cuenta conectada -->
-      <label for="accountInfo">Dirección de la cuenta conectada:</label>
+      <!-- Text box with info about the connected account -->
+      <label for="accountInfo">Connected account address:</label>
       <input
         id="accountInfo"
         type="text"
         readonly
-        placeholder="Conecta MetaMask para ver tu address"
+        placeholder="Connect MetaMask to see your address"
       />
-      <label for="privateKeyInput">Clave privada. <span class="important"></span>Importante: formato hexadecimal, con 0x al inicio</span></label>
+      <label for="privateKeyInput">Private key. <span class="important"></span>Important: hexadecimal format, starting with 0x</span></label>
       <input 
         id="privateKeyInput"
         type="text"
-        placeholder="Private key (necesaria para enviar blobs)"
+        placeholder="Private key (needed to send blobs)"
       />
  
       <div class="tabs">
-        <button id="tabSend" class="tab active">Enviar</button>
-        <button id="tabReceive" class="tab">Recibir</button>
+        <button id="tabSend" class="tab active">Send</button>
+        <button id="tabReceive" class="tab">Receive</button>
       </div>
       <div id="viewSend" class="tabview active">
-        <!-- Aquí va tu formulario de envío actual -->
-        <h1>Envío</h1>
+        <!-- Your current sending form goes here -->
+        <h1>Sending</h1>
 
-        <!-- Input para el address -->
-        <label for="receiver">Introduce el address del receptor:</label>
-        <input id="receiver" type="text" placeholder="Introduce un address" />
+        <!-- Input for the address -->
+        <label for="receiver">Enter the receiver's address:</label>
+        <input id="receiver" type="text" placeholder="Enter an address" />
 
-        <!-- Input para el contenido del blob -->
-        <label for="blobContent">Contenido del blob:</label>
+        <!-- Input for the blob content -->
+        <label for="blobContent">Blob content:</label>
         <textarea
           id="blobContent"
-          placeholder="Escribe el contenido del blob"
+          placeholder="Write the blob content"
         ></textarea>
 
-        <!-- Checkbox para encriptar el mensaje -->
+        <!-- Checkbox to encrypt the message -->
         <div class="checkbox-container">
-          <label for="encryptMessage">¿Encriptar el mensaje? <br><br>
-            Nota: requiere que el destinatario haya enviado un mensaje previamente</label>
+          <label for="encryptMessage">Encrypt the message? <br><br>
+            Note: requires the recipient to have sent a message previously</label>
             <br>
           <input id="encryptMessage" type="checkbox" />
         </div>
         <br>
-        <!-- Botón para enviar -->
-        <button id="sendBlob">Enviar Mensaje</button>
+        <!-- Send button -->
+        <button id="sendBlob">Send Message</button>
 
-        <!-- Botón para conectar a MetaMask -->
-        <button id="connectMetamask">Conectar Metamask</button>
+        <!-- Button to connect to MetaMask -->
+        <button id="connectMetamask">Connect Metamask</button>
       </div>
       <div id="viewReceive" class="tabview">
-        <!-- Aquí va la nueva vista de recepción -->
-        <h2>Recepción de blobs</h2>
-        Dirección del receptor (opcional):
-        <input id="receiverFilter" placeholder="Filtra por dirección del receptor" />
-        Dirección del emisor (opcional):
-        <input id="senderFilter" placeholder="Filtra por dirección del emisor" />
-        <button id="viewEvents">Ver todos los mensajes</button>
-        <button id="searchEvents">Filtrar mensajes</button>
+        <!-- The new receiving view goes here -->
+        <h2>Receiving blobs</h2>
+        Receiver address (optional):
+        <input id="receiverFilter" placeholder="Filter by receiver address" />
+        Sender address (optional):
+        <input id="senderFilter" placeholder="Filter by sender address" />
+        <button id="viewEvents">View all messages</button>
+        <button id="searchEvents">Filter messages</button>
 
         <div id="receivedBlobs"></div>
       </div>

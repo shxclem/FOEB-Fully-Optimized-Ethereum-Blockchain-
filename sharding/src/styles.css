@@ -34,7 +34,7 @@ body {
   .checkbox-container input[type="checkbox"] {
     margin-right: 10px;
   }
-  /* Añade esto a tu styles.css si no lo tienes */
+
 .tabview { display: none; }
 .tabview.active { display: block; }
 .tab.active { background: #e0e0e0; }

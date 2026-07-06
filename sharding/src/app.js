@@ -26,7 +26,7 @@ const searchButton = document.getElementById("searchEvents");
 const senderInput = document.getElementById("senderFilter");
 const receiverFilterInput = document.getElementById("receiverFilter");
 
-// Punto de acceso RPC al nodo
+// RPC endpoint for the node
 const rpcURL =
   "https://eth-sepolia.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
 
@@ -36,10 +36,10 @@ const rpcURL2 =
 const beaconURL =
   "https://eth-sepoliabeacon.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
 
-// Dirección del contrato desplegado
+// Deployed contract address
 const contractAddress = "0x856bBEF8Da0337AF597d2303A764ebd22e9D8613";
 
-// ABI del contrato
+// Contract ABI
 const abi = [
   "function send_message(address receiver, bytes publicKey)",
   "function publicKeys(address) view returns (bytes)",
@@ -52,26 +52,26 @@ async function connectMetaMask() {
     const signer = await metamask.getSigner();
     const account = await signer.getAddress();
 
-    // Escribir la dirección en el input de accountInfo
+    // Write the address into the accountInfo input
     const accountInfoInput = document.getElementById("accountInfo");
     accountInfoInput.value = account;
 
-    console.log("Metamask conectado");
+    console.log("Metamask connected");
   } catch {
-    console.error("Error al conectar metamask");
+    console.error("Error connecting Metamask");
   }
 }
 
 const provider = new ethers.JsonRpcProvider(rpcURL);
 if (!window.ethereum) {
-  alert("Por favor, instala MetaMask para usar esta aplicación.");
+  alert("Please install MetaMask to use this application.");
 }
 const metamask = new ethers.BrowserProvider(window.ethereum);
 
 async function getEventLogs(receiverFilter = null, senderFilter = null) {
   const receivedBlobsDiv = document.getElementById("receivedBlobs");
   receivedBlobsDiv.innerHTML =
-    '<div id="search-feedback">Buscando mensajes...</div>';
+    '<div id="search-feedback">Searching for messages...</div>';
 
   const client = createPublicClient({
     chain: sepolia,
@@ -104,7 +104,7 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  // Filtra los logs si hay filtro de receiver y/o sender
+  // Filter the logs if there is a receiver and/or sender filter
   if (receiverFilter) {
     logs = logs.filter(
       (log) => log.args.receiver.toLowerCase() === receiverFilter.toLowerCase()
@@ -116,16 +116,16 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
     );
   }
 
-  receivedBlobsDiv.innerHTML = ""; // Limpia resultados previos
+  receivedBlobsDiv.innerHTML = ""; // Clear previous results
 
   if (logs.length === 0) {
     receivedBlobsDiv.innerHTML =
-      '<div id="search-feedback">No se encontraron mensajes.</div>';
+      '<div id="search-feedback">No messages found.</div>';
     return;
   }
 
   for (const log of logs) {
-    // Obtén el parentBeaconBlockRoot del bloque de ejecución
+    // Get the parentBeaconBlockRoot from the execution block
 
     const block = await client.getBlock({ blockNumber: log.blockNumber });
     const parentRoot = block.parentBeaconBlockRoot;
@@ -142,7 +142,7 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
       <b>Tx Hash:</b> ${log.transactionHash}<br>
       <b>Block Number:</b> ${log.blockNumber}<br>
       <b>Parent Beacon Block Root:</b> ${parentRoot}<br>
-      <button class="show-blobs-btn">Ver blobs</button>
+      <button class="show-blobs-btn">View blobs</button>
       <div class="blobs-content"></div>
       <hr>
     `;
@@ -152,78 +152,78 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
       .querySelector(".show-blobs-btn")
       .addEventListener("click", async () => {
         const contentDiv = msgDiv.querySelector(".blobs-content");
-        contentDiv.innerText = "Cargando blobs...";
+        contentDiv.innerText = "Loading blobs...";
 
-        // 1. Obtén la transacción
+        // 1. Get the transaction
         const tx = await provider.getTransaction(log.transactionHash);
-        console.log("Transacción obtenida:", tx);
+        console.log("Transaction obtained:", tx);
         if (!tx) {
-          contentDiv.innerText = "No se pudo obtener la transacción.";
+          contentDiv.innerText = "Could not get the transaction.";
           return;
         }
         const blockNumber = tx.blockNumber;
         const blobVersionedHashes = tx.blobVersionedHashes || [];
         console.log("blobVersionedHashes:", blobVersionedHashes);
 
-        // 2. Obtén el bloque de ejecución y su parentBeaconBlockRoot
+        // 2. Get the execution block and its parentBeaconBlockRoot
         const block = await client.getBlock({ blockNumber });
         const parentRoot = block.parentBeaconBlockRoot;
-        console.log("Block obtenido:", block);
-        console.log("Parent Beacon Block Root (de la tx):", parentRoot);
+        console.log("Block obtained:", block);
+        console.log("Parent Beacon Block Root (from the tx):", parentRoot);
         if (!parentRoot) {
-          contentDiv.innerText = "No se pudo obtener el parentBeaconBlockRoot.";
+          contentDiv.innerText = "Could not get the parentBeaconBlockRoot.";
           return;
         }
 
-        // 3. Obtén el slot del parentBeaconBlockRoot
+        // 3. Get the slot of the parentBeaconBlockRoot
         const url = `${beaconURL}/eth/v2/beacon/blocks/${parentRoot}`;
         const response = await fetch(url, {
           headers: { accept: "application/json" },
         });
         if (!response.ok) {
-          contentDiv.innerText = "No se pudo obtener el slot del parent root.";
+          contentDiv.innerText = "Could not get the slot of the parent root.";
           console.log(
-            "Error al obtener el slot del parent root:",
+            "Error getting the slot of the parent root:",
             response.status
           );
           return;
         }
         const data = await response.json();
         const slot = data.data.message.slot;
-        console.log("Slot del parent root:", slot);
+        console.log("Slot of the parent root:", slot);
         if (!slot) {
-          contentDiv.innerText = "No se pudo obtener el slot.";
+          contentDiv.innerText = "Could not get the slot.";
           return;
         }
 
-        // 4. El blob está en el siguiente slot
+        // 4. The blob is in the next slot
         const nextSlot = BigInt(slot) + 1n;
-        console.log("Slot objetivo para blobs:", nextSlot.toString());
+        console.log("Target slot for blobs:", nextSlot.toString());
         const blobUrl = `${beaconURL}/eth/v1/beacon/blob_sidecars/${nextSlot}`;
         const blobResp = await fetch(blobUrl, {
           headers: { accept: "application/json" },
         });
         if (!blobResp.ok) {
-          contentDiv.innerText = "No se pudo obtener los blob sidecars.";
-          console.log("Error al obtener blob sidecars:", blobResp.status);
+          contentDiv.innerText = "Could not get the blob sidecars.";
+          console.log("Error getting blob sidecars:", blobResp.status);
           return;
         }
         const blobData = await blobResp.json();
         const blobSidecars = blobData.data || [];
-        console.log("Blob sidecars obtenidos:", blobSidecars);
+        console.log("Blob sidecars obtained:", blobSidecars);
 
-        // 5. Busca los blobs de la transacción
+        // 5. Find the blobs for the transaction
         const blobsForTx = findBlobsForTx(blobSidecars, blobVersionedHashes);
-        console.log("Blobs asociados a la transacción:", blobsForTx);
+        console.log("Blobs associated with the transaction:", blobsForTx);
 
         if (!blobsForTx || !blobsForTx.length || blobsForTx.every((b) => !b)) {
-          contentDiv.innerText = "No hay blobs asociados a esta transacción.";
+          contentDiv.innerText = "No blobs associated with this transaction.";
         } else {
-          // Mostrar cada blob con opción de decodificar como UTF-8
+          // Show each blob with the option to decode as UTF-8
           contentDiv.innerHTML = blobsForTx
             .map((blob, idx) => {
-              if (!blob) return `<div>Blob ${idx}: No encontrado</div>`;
-              // Decodifica el blob (hex) a UTF-8
+              if (!blob) return `<div>Blob ${idx}: Not found</div>`;
+              // Decode the blob (hex) to UTF-8
               let decoded = "";
               try {
                 const hex = blob.blob.replace(/^0x/, "");
@@ -232,16 +232,16 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
                 );
                 decoded = new TextDecoder("utf-8").decode(bytes);
               } catch (e) {
-                decoded = "(No se pudo decodificar como UTF-8)";
+                decoded = "(Could not decode as UTF-8)";
               }
-              // Añade el botón de desencriptar
+              // Add the decrypt button
               return `
             <div>
               <b>Blob ${idx}:</b><br>
               <textarea rows="3" cols="60" readonly id="blob-hex-${idx}">${blob.blob}</textarea><br>
               <b>UTF-8:</b> <pre id="blob-encrypted-${idx}">${decoded}</pre>
-              <b>Descifrado:</b> <pre id="blob-decoded-${idx}">${decoded}</pre>
-              <button class="decrypt-blob-btn" data-blob="${blob.blob}" data-idx="${idx}">Desencriptar</button>
+              <b>Decrypted:</b> <pre id="blob-decoded-${idx}">${decoded}</pre>
+              <button class="decrypt-blob-btn" data-blob="${blob.blob}" data-idx="${idx}">Decrypt</button>
             </div>
             <hr>
           `;
@@ -249,7 +249,7 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
             .join("");
         }
 
-        // Añade listeners a los botones de desencriptar
+        // Add listeners to the decrypt buttons
         contentDiv.querySelectorAll(".decrypt-blob-btn").forEach((btn) => {
           btn.addEventListener("click", async (e) => {
             const idx = btn.getAttribute("data-idx");
@@ -261,7 +261,7 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
 
             const privateKey = privateKeyInput.value.trim();
 
-            // Usa EthCrypto para parsear y desencriptar
+            // Use EthCrypto to parse and decrypt
             try {
               const encryptedObj = EthCrypto.cipher.parse(utf8Cipher);
               const result = await EthCrypto.decryptWithPrivateKey(
@@ -270,42 +270,42 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
               );
               if (decodedPre) decodedPre.textContent = result;
             } catch (err) {
-              console.error("Error al desencriptar:", err);
-              alert("No se pudo desencriptar el mensaje: " + err.message);
+              console.error("Error decrypting:", err);
+              alert("Could not decrypt the message: " + err.message);
             }
           });
         });
       });
   }
 
-  // Feedback de búsqueda completada
+  // Search completed feedback
   const feedback = document.createElement("div");
   feedback.id = "search-feedback";
   feedback.textContent =
-    "Búsqueda completada (" + logs.length + " mensajes encontrados)";
+    "Search completed (" + logs.length + " messages found)";
   receivedBlobsDiv.insertBefore(feedback, receivedBlobsDiv.firstChild);
 }
 
-// Dado un array de blobs del bloque y un array de blobVersionedHashes de la tx
+// Given an array of blobs from the block and an array of blobVersionedHashes from the tx
 
 function findBlobsForTx(blobSidecars, blobVersionedHashes) {
-  console.log("Comparando blobs y versioned hashes (EIP-4844 real)...");
+  console.log("Comparing blobs and versioned hashes (real EIP-4844)...");
   return blobVersionedHashes.map((versionHash) => {
     return blobSidecars.find((blob) => {
-      // Quita el 0x si lo tiene
+      // Remove the 0x if present
       let kzgCommitment = blob.kzg_commitment.replace(/^0x/, "");
-      // Convierte a Uint8Array
+      // Convert to Uint8Array
       let binaryKzg = ethers.getBytes("0x" + kzgCommitment);
-      // SHA256 del commitment
-      let hash = ethers.sha256(binaryKzg); // hash es un hex string 0x...
-      // Versioned hash: 0x01 + hash sin el 0x inicial
+      // SHA256 of the commitment
+      let hash = ethers.sha256(binaryKzg); // hash is a hex string 0x...
+      // Versioned hash: 0x01 + hash without the leading 0x
       let modifiedHash = "0x01" + hash.slice(4);
       console.log(
-        "Comparando",
+        "Comparing",
         versionHash,
-        "con",
+        "with",
         modifiedHash,
-        "para commitment",
+        "for commitment",
         blob.kzg_commitment
       );
       return versionHash.toLowerCase() === modifiedHash.toLowerCase();
@@ -313,33 +313,33 @@ function findBlobsForTx(blobSidecars, blobVersionedHashes) {
   });
 }
 
-// Función para encriptar el mensaje usando la clave pública del receptor
+// Function to encrypt the message using the receiver's public key
 async function encryptMessageForReceiverEthCrypto(message, receiverPublicKey) {
-  // receiverPublicKey debe ser un string hexadecimal (sin 0x)
+  // receiverPublicKey must be a hexadecimal string (without 0x)
   const encrypted = await EthCrypto.encryptWithPublicKey(
     receiverPublicKey.replace(/^0x/, ""),
     message
   );
-  // Codifica el objeto encriptado como string para enviar
+  // Encode the encrypted object as a string to send
   return EthCrypto.cipher.stringify(encrypted);
 }
 
-// Función para enviar blob a contrato
+// Function to send a blob to the contract
 async function sendBlobToContractViem() {
   const receiver = receiverInput.value;
   const blobContent = String(blobContentInput.value);
   const privateKey = privateKeyInput.value.trim();
 
   if (!ethers.isAddress(receiver)) {
-    alert("Introduce una dirección válida de Ethereum.");
+    alert("Enter a valid Ethereum address.");
     return;
   }
   if (!blobContent) {
-    alert("Introduce el contenido del blob.");
+    alert("Enter the blob content.");
     return;
   }
   if (!privateKey) {
-    alert("Introduce la clave privada.");
+    alert("Enter the private key.");
     return;
   }
 
@@ -347,7 +347,7 @@ async function sendBlobToContractViem() {
   const receiverPublicKey = await contract.publicKeys(receiver);
   console.log("Receiver Public Key from contract:", receiverPublicKey);
 
-  // Si está activada la encriptación, encripta el contenido del blob
+  // If encryption is enabled, encrypt the blob content
   let encryptedBlobContent = blobContent;
   if (
     encryptCheckbox.checked &&
@@ -359,23 +359,23 @@ async function sendBlobToContractViem() {
       receiverPublicKey
     );
   }
-  else encryptedBlobContent = blobContent; // No encriptado
+  else encryptedBlobContent = blobContent; // Not encrypted
 
-  // Calcula la clave pública del emisor
+  // Compute the sender's public key
   const senderPublicKey = EthCrypto.publicKeyByPrivateKey(privateKey);
   console.log("Sender Public Key:", senderPublicKey);
   const compressedSenderPublicKey =
     EthCrypto.publicKey.compress(senderPublicKey);
   console.log("Compressed Sender Public Key:", compressedSenderPublicKey);
 
-  // Codifica la llamada a la función
+  // Encode the function call
   const iface = new Interface(abi);
   const data = iface.encodeFunctionData("send_message", [
     receiver,
     "0x" + senderPublicKey,
   ]);
 
-  // Prepara el KZG y el cliente
+  // Prepare the KZG and the client
   const kzg = new microEthKZG(trustedSetup);
 
   const nonceManager = createNonceManager({ source: jsonRpc() });
@@ -399,15 +399,15 @@ async function sendBlobToContractViem() {
     eips: [4844],
     customCrypto: { kzg },
   });
-  // Prepara la transacción tipo blob
+  // Prepare the blob-type transaction
   const txData = {
     chainId: 11155111, // Sepolia
     type: 3,
     to: contractAddress,
-    data: data, // llamada codificada
+    data: data, // encoded call
     kzg: kzg,
     value: 0,
-    gasLimit: 800000, // Gas de sobra
+    gasLimit: 800000, // Extra gas margin
     maxFeePerGas: 10 ** 11,
     maxPriorityFeePerGas: 10 ** 11,
     maxFeePerBlobGas: 10 ** 11,
@@ -417,32 +417,32 @@ async function sendBlobToContractViem() {
 
   const pk = hexToBytes(privateKey);
   const tx = createBlob4844Tx(txData, { common });
-  console.log("Transacción preparada:", tx);
+  console.log("Transaction prepared:", tx);
   const signedTx = tx.sign(pk);
-  console.log("Transacción firmada:", signedTx);
+  console.log("Transaction signed:", signedTx);
   const serialized = signedTx.serializeNetworkWrapper();
-  console.log("Transacción serializada:", bytesToHex(serialized));
+  console.log("Transaction serialized:", bytesToHex(serialized));
 
   try {
     const hash = await client.sendRawTransaction({
       serializedTransaction: bytesToHex(serialized),
     });
     console.log("tx hash: " + hash);
-    alert("Transacción enviada: " + hash);
+    alert("Transaction sent: " + hash);
   } catch (error) {
-    console.error("Error al enviar la transacción:", error);
-    alert("Error al enviar la transacción: " + error.message);
+    console.error("Error sending the transaction:", error);
+    alert("Error sending the transaction: " + error.message);
   }
 }
 
 function hexToBase64(hexString) {
-  // Quita el 0x si lo tiene
+  // Remove the 0x if present
   hexString = hexString.replace(/^0x/, "");
-  // Convierte a array de bytes
+  // Convert to a byte array
   const bytes = new Uint8Array(
     hexString.match(/.{1,2}/g).map((b) => parseInt(b, 16))
   );
-  // Convierte a base64 usando btoa
+  // Convert to base64 using btoa
   let binary = "";
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
   return btoa(binary);
@@ -473,7 +473,7 @@ tabReceive.addEventListener("click", () => {
 });
 
 viewEventsButton.addEventListener("click", async () => {
-  // Sin filtros: muestra todos los mensajes
+  // No filters: show all messages
   await getEventLogs();
 });
 
