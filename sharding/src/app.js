@@ -237,7 +237,7 @@ async function getEventLogs(receiverFilter = null, senderFilter = null) {
               // Add the decrypt button
               return `
             <div>
-              <b>Blob ${idx}:</b><br>
+              <b>Blob (message #${log.args.tx_id}):</b>
               <textarea rows="3" cols="60" readonly id="blob-hex-${idx}">${blob.blob}</textarea><br>
               <b>UTF-8:</b> <pre id="blob-encrypted-${idx}">${decoded}</pre>
               <b>Decrypted:</b> <pre id="blob-decoded-${idx}">${decoded}</pre>
