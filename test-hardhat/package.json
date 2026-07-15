@@ -1,0 +1,12 @@
+{
+  "name": "escrow-manager-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "hardhat": "^3.9.1",
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.7"
+  }
+}
