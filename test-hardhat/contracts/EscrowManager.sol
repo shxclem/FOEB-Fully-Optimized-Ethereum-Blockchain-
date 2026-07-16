@@ -71,7 +71,7 @@ contract EscrowManager {
     event OrderTimeoutClaimed(uint256 indexed orderId);
     event Withdrawal(address indexed account, uint256 amount);
     event PublicKeyRegistered(address indexed account, bytes publicKey);
-    event ContentSent(uint256 indexed orderId, address indexed sender, address indexed receiver, string contentType);
+    event ContentSent(uint256 indexed contentId, address indexed sender, address indexed receiver, string contentType);
 
 
     // ---------------------------- Custom errors (Cheaper in gas than require + string) ----------------------------

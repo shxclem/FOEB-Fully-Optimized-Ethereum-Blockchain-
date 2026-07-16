@@ -19,7 +19,7 @@ contract EscrowManager {
 
     enum OrderStatus {
         Funded, // Funds are locked, waiting for confirmation or dispute
-        Released, // Funds released to the seller (final state)
+        Released // Funds released to the seller (final state)
     }
 
     struct Listing {
@@ -71,7 +71,7 @@ contract EscrowManager {
     event OrderTimeoutClaimed(uint256 indexed orderId);
     event Withdrawal(address indexed account, uint256 amount);
     event PublicKeyRegistered(address indexed account, bytes publicKey);
-    event ContentSent(uint256 indexed orderId, address indexed sender, address indexed receiver, string contentType);
+    event ContentSent(uint256 indexed contentId, address indexed sender, address indexed receiver, string contentType);
 
 
     // ---------------------------- Custom errors (Cheaper in gas than require + string) ----------------------------
@@ -123,6 +123,7 @@ contract EscrowManager {
         if (!listings[listingId].active) revert ListingNotActive();
 
         listings[listingId].active = false;
+
         emit ListingCancelled(listingId);
     }
 
@@ -165,6 +166,7 @@ contract EscrowManager {
     /// @notice Seller claims the funds after the timeout if the buyer did not confirm receipt.
     function claimTimeout(uint256 orderId) external {
         if (block.timestamp < orders[orderId].deadline) revert TimeoutNotReached();
+        if (orders[orderId].seller != msg.sender) revert NotSeller();
         if (orders[orderId].status != OrderStatus.Funded) revert WrongStatus();
 
         orders[orderId].status = OrderStatus.Released;
@@ -226,4 +228,4 @@ contract EscrowManager {
     function getPublicKey(address account) external view returns (bytes memory) {
         return publicKeys[account];
     }
-}   
+}

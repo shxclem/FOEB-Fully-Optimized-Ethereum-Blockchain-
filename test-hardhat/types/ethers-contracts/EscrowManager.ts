@@ -65,9 +65,9 @@ decodeFunctionResult(functionFragment: 'withdraw', data: BytesLike): Result;
 
   
     export namespace ContentSentEvent {
-      export type InputTuple = [orderId: BigNumberish, sender: AddressLike, receiver: AddressLike, contentType: string];
-      export type OutputTuple = [orderId: bigint, sender: string, receiver: string, contentType: string];
-      export interface OutputObject {orderId: bigint, sender: string, receiver: string, contentType: string };
+      export type InputTuple = [contentId: BigNumberish, sender: AddressLike, receiver: AddressLike, contentType: string];
+      export type OutputTuple = [contentId: bigint, sender: string, receiver: string, contentType: string];
+      export interface OutputObject {contentId: bigint, sender: string, receiver: string, contentType: string };
       export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>
       export type Filter = TypedDeferredTopicFilter<Event>
       export type Log = TypedEventLog<Event>
