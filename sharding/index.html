@@ -1,82 +1,172 @@
 <!DOCTYPE html>
 <html lang="en">
+
   <head>
     <meta charset="UTF-8" />
-    <title>Sharding DApp</title>
-    <link rel="stylesheet" href="./src/styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>FOEB</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com"/>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./src/styles.css"/>
   </head>
 
   <body>
-
-    <div class="container">
-      <h1>Blob messaging prototype</h1>
-
-      <!-- Text box with info about the connected account -->
-      <label for="accountInfo">Connected account address:</label>
-      <input
-        id="accountInfo"
-        type="text"
-        readonly
-        placeholder="Connect MetaMask to see your address"
-      />
-      <label for="privateKeyInput">Private key. <span class="important"></span>Important: hexadecimal format, starting with 0x</span></label>
-      <input 
-        id="privateKeyInput"
-        type="text"
-        placeholder="Private key (needed to send blobs)"
-      />
- 
-      <div class="tabs">
-        <button id="tabSend" class="tab active">Send</button>
-        <button id="tabReceive" class="tab">Receive</button>
-      </div>
-      <div id="viewSend" class="tabview active">
-        <!-- Your current sending form goes here -->
-        <h1>Sending</h1>
-
-        <!-- Input for the address -->
-        <label for="receiver">Enter the receiver's address:</label>
-        <input id="receiver" type="text" placeholder="Enter an address" />
-
-        <!-- Input for the blob content -->
-        <label for="blobContent">Blob content:</label>
-        <textarea
-          id="blobContent"
-          placeholder="Write the blob content"
-        ></textarea>
-
-        <!-- Checkbox to encrypt the message -->
-        <div class="checkbox-container">
-          <label for="encryptMessage">Encrypt the message? <br><br>
-            Note: requires the recipient to have sent a message previously</label>
-            <br>
-          <input id="encryptMessage" type="checkbox" />
+    
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <span class="brand-mark-a"></span>
+            <span class="brand-mark-b"></span>
+          </span>
+          <span class="brand-name">Fully-Optimized<span class="brand-accent"> Ethereum-Blockchain</span></span>
         </div>
-        <br>
-        <!-- Send button -->
-        <button id="sendBlob">Send Message</button>
 
-        <!-- Button to connect to MetaMask -->
-        <button id="connectMetamask">Connect Metamask</button>
-      </div>
-      <div id="viewReceive" class="tabview">
-        <!-- The new receiving view goes here -->
-        <h2>Receiving blobs</h2>
-        Receiver address (optional):
-        <input id="receiverFilter" placeholder="Filter by receiver address" />
-        Sender address (optional):
-        <input id="senderFilter" placeholder="Filter by sender address" />
-        <button id="viewEvents">View all messages</button>
-        <button id="searchEvents">Filter messages</button>
+        <nav class="tabs" role="tablist" aria-label="Rol">
+          <button id="tabSell" class="tab active" role="tab" aria-selected="true">Sell</button>
+          <button id="tabBuy" class="tab" role="tab" aria-selected="false">Buy</button>
+        </nav>
 
-        <div id="receivedBlobs"></div>
-      </div>
+        <div class="wallet">
+          <span class="network-badge"><span class="network-dot" aria-hidden="true"></span>Sepolia</span>
+          <input id="accountInfo" class="account-chip mono" readonly placeholder="Not connected"/>
+          <button id="connectMetaMask" class="btn btn-primary">Connect wallet</button>
+        </div>
+      </header>
+
+      <main>
+        <!-- SELLER VIEW-->
+        <section id="viewSell" class="view active">
+          <div class="view-header">
+            <h1>Sell</h1>
+            <p class="view-sub">List items and manage the orders you receive as a seller.</p>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">New Listing</h2>
+            <form id="createListingForm" class="form-grid">
+              <label class="field">
+                <span class="field-label">Price (ETH)</span>
+                <input type="text" id="listingPrice" class="mono" placeholder="0.05" required/>
+              </label>
+
+              <label class="field field-span-2">
+                <span class="field-label">Description</span>
+                <input type="text" id="listingMetadata" placeholder="E.g. New wireless headphones" required/>
+              </label>
+
+              <button type="submit" class="btn btn-primary field-span-3">Create Listing</button>
+            </form>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">My listings</h2>
+            <div id="myListings" class="listing-grid" data-state="empty">
+              <p class="empty-state">Connect your wallet to view your listings.</p>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">Orders received</h2>
+            <div id="sellerOrders" class="order-list" data-state="empty">
+              <p class="empty-state">Connect your wallet to view your sales orders.</p>
+            </div>
+          </div>
+        
+          <div class="panel">
+            <div class="panel-title-row">
+              <h2 class="panel-title">Funds available</h2>
+              <button id="withdrawButton" class="btn btn-primary" disabled>Withdraw</button>
+            </div>
+            <p class="view-sub">
+              Balance released to you, pending withdrawal:
+              <span id="withdrawAmount" class="mono">- ETH</span>
+            </p>
+          </div>
+        </section>
+
+        <!-- BUYER VIEW -->
+        <section id="viewBuy" class="view">
+          <div class="view-header">
+            <h1>Buy</h1>
+            <p class="view-sub">Explore active listings and track the status of your orders.</p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title-row">
+              <h2 class="panel-title">Listings available</h2>
+              <button id="refreshListings" class="btn btn-ghost">Refresh</button>
+            </div>
+            
+            <div id="activeListings" class="listing-grid" data-state="empty">
+              <p class="empty-state">Loading listings...</p>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">My orders</h2>
+            <div id="buyerOrders" class="order-list" data-state="empty">
+              <p class="empty-state">Connect your wallet to view your orders.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>EscrowManager Contract in Sepolia | </span>
+        <span class="mono" id="contractAddressDisplay">0xdCeD9c616d18Aacf7c7d94479dE9d8ffe27971Ce</span>
+      </footer>
     </div>
 
-    <script src="./src/app.js" type="module"></script>
+    <!-- Templated filled dynamically with app.js -->
+     <template id="listingCardTemplate">
+      <article class="card listing-card">
 
-    <script type="module">
-      import { loadKZG } from 'kzg-wasm'
-    </script>
+        <div class="card-top">
+          <span class="price mono">- ETH</span>
+          <span class="status-badge status-active">Active</span>
+        </div>
+      
+        <p class="listing-desc"></p>
+
+        <div class="card-meta">
+          <span class="meta-label">Seller</span>
+          <span class="meta-value mono seller-address"></span>
+        </div>
+
+        <div class="card-actions"></div>
+      </article>
+     </template>
+
+     <template id="orderCardTemplate">
+      <article class="card order-card">
+
+        <div class="card-top">
+          <span class="order-id mono">Order #-></span>
+          <span class="status-badge">>-></span>
+        </div>
+        
+        <div class="card-meta">
+          <span class="meta-label">Amount</span>
+          <span class="meta-value mono order-amount"></span>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-label">Counterparty</span>
+          <span class="meta-value mono order-counterparty"></span>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-label">Deadline</span>
+          <span class="meta-value order-deadline"></span> 
+        </div>
+
+        <div class="card-actions"></div>
+      </article>
+     </template>
+
+     <script type="module" src="./src/app.js"></script>
   </body>
-</html>
+</html>  
