@@ -76,12 +76,59 @@ let currentAccount = null;      // account address (string) of the currently con
 let writeContract = null;       // EscrowManager instance linked to signer, used to send signed transactions to the smart contract
 
 
+const SEPOLIA_CHAIN_ID = 11155111n;
+const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
+const SEPOLIA_ADD_PARAMS = {
+  chainId: SEPOLIA_CHAIN_ID_HEX,
+  chainName: "Sepolia",
+  nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: [rpcURL],
+  blockExplorerUrls: ["https://sepolia.etherscan.io"],
+};
+
 // ---------------------------- Functions to connect to MetaMask ----------------------------
+
+/// Function to verify that Metamask works with Sepolia to make sure we are on the testnet
+async function ensureSepoliaNetwork() {
+  const network = await browserProvider.getNetwork();
+  if (network.chainId === SEPOLIA_CHAIN_ID) return true;
+ 
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
+    });
+    return true;
+  } catch (switchError) {
+    // Code 4902 : le réseau n'est pas encore connu de ce MetaMask.
+    if (switchError.code === 4902) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [SEPOLIA_ADD_PARAMS],
+        });
+        return true;
+      } catch (addError) {
+        console.error("Couldn't add Sepolia network", addError);
+        return false;
+      }
+    }
+    console.error("Couldn't switch to Sepolia network", switchError);
+    return false;
+  }
+}
 
 async function connectMetaMask() {
     try {
         browserProvider = new ethers.BrowserProvider(window.ethereum);
         await browserProvider.send("eth_requestAccounts", []);
+
+        const onSepolia = await ensureSepoliaNetwork();
+        if (!onSepolia) {
+            alert("This application only works with Sepolia. Switch network on Metamask and try again.");
+            browserProvider = null;
+            return;
+        }
 
         signer = await browserProvider.getSigner();
         currentAccount = await signer.getAddress();
