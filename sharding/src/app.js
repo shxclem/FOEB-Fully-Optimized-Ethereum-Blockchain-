@@ -100,7 +100,7 @@ async function ensureSepoliaNetwork() {
     });
     return true;
   } catch (switchError) {
-    // Code 4902 : le réseau n'est pas encore connu de ce MetaMask.
+
     if (switchError.code === 4902) {
       try {
         await window.ethereum.request({
@@ -152,6 +152,7 @@ if (window.ethereum) {
             signer = null;
             writeContract = null;
             console.log("Metamask disconnected");
+            await refreshWalletBalance();
             return;
         }
         currentAccount = ethers.getAddress(accounts[0]);
@@ -211,7 +212,8 @@ async function fetchAllListings() {
         listings.push(await readContract.getListing(i));
     }
 
-    return listings;
+    // Using reverse() to make put more recent listings first 
+    return listings.reverse();
 }
 
 // Function to get all existing active listings (active = true)
@@ -230,8 +232,15 @@ async function fetchAllOrders() {
         orders.push(await readContract.getOrder(i));
     }
 
-    return orders;
+    // Using reverse() to make put more recent orders first 
+    return orders.reverse();
 } 
+
+// Function to get the set of listingIds that have an associated order (to get canceled listings)
+async function fetchSoldListingIds() {
+    const orders = await fetchAllOrders();
+    return new Set(orders.map((order) => order.listingId.toString()));
+}
 
 // Function to get orders where the connected account is the buyer
 async function fetchOrdersAsBuyer(account = currentAccount) {
@@ -255,24 +264,33 @@ async function fetchOrdersAsSeller(account = currentAccount) {
 async function fetchMyListings(account = currentAccount) {
     if (!account) return [];
 
-    const listings = await fetchAllListings();
+    const [listings, soldIds] = await Promise.all([fetchAllListings(), fetchSoldListingIds()]);
 
-    return listings.filter((listing) => isListingSeller(listing, account));
+    return listings.filter((listing) => {
+        if (!isListingSeller(listing, account)) return false;
+
+        return listing.active || soldIds.has(listing.id.toString());
+    });
 }
 
+// Function to get a Map of all listings indexed by their id (as string), useful to get descriptions from orders
+async function fetchListingsMap() {
+    const listings = await fetchAllListings();
+    return new Map(listings.map((listing) => [listing.id.toString(), listing]));
+}
 
 // ---------------------------- Seller actions ----------------------------
 
 // Function to create a new listing
-// @param priceEth: price in ETH (converted to Wei inside the function)
+// @param priceEth: price in Gwei (converted to Wei inside the function)
 // @param metadataRef: external reference to the object description
-async function createListing(priceEth, metadataRef) {
+async function createListing(priceGwei, metadataRef) {
     if (!writeContract) {
         alert("Please connect your MetaMask wallet first.");
         return;
     }
 
-    const priceWei = ethers.parseEther(priceEth);
+    const priceWei = ethers.parseUnits(priceGwei, "gwei");
 
     try {
         const tx = await writeContract.createListing(priceWei, metadataRef);
@@ -488,9 +506,9 @@ function shortenAddress(address) {
     return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-// Function to transform a wei price into an ETH price
-function formatEth(wei) {
-    return `${ethers.formatEther(wei)} ETH`;
+// Function to transform a price into a wei price
+function formatGwei(wei) {
+    return `${ethers.formatUnits(wei, "gwei")} Gwei`;
 }
 
 // Function to convert a Unix timestamp in seconds into a human-readable date based on locale settings
@@ -508,15 +526,15 @@ const orderCardTemplate = document.getElementById("orderCardTemplate");
 function createListingCardElement(listing, context) {
     const node = listingCardTemplate.content.cloneNode(true);
 
-    node.querySelector(".price").textContent = formatEth(listing.price);
+    node.querySelector(".price").textContent = formatGwei(listing.price);
 
     const statusBadge = node.querySelector(".status-badge");
     if (listing.active) {
         statusBadge.textContent = "Active";
-        statusBadge.className = "status-badge status-active";
+        statusBadge.className = "status-badge card-badge status-active";
     } else {
         statusBadge.textContent = "Sold";
-        statusBadge.className = "status-badge status-sold";
+        statusBadge.className = "status-badge card-badge status-sold";
     }
 
     node.querySelector(".listing-desc").textContent = listing.metadataRef;
@@ -544,7 +562,7 @@ function createListingCardElement(listing, context) {
         const buyBtn = document.createElement("button");
         buyBtn.className = "btn btn-primary btn-sm";
         buyBtn.textContent = isOwn ? "This is your listing" : "Buy";
-        buyBtn.disabled = isOwn || currentAccount;
+        buyBtn.disabled = isOwn || !currentAccount;
         buyBtn.addEventListener("click", async () => {
             buyBtn.disabled = true;
             await buyListing(listing.id);
@@ -557,21 +575,23 @@ function createListingCardElement(listing, context) {
 }
 
 // Function to build an order card with "buyer" or "seller" role to display the available actions
-function createOrderCardElement(order, role) {
+function createOrderCardElement(order, role, listingsMap) {
     const node = orderCardTemplate.content.cloneNode(true);
 
-    node.querySelector(".order-id").textContent = `Order #${order.id.toString()}`;
+    const listing = listingsMap?.get(order.listingId.toString());
+    const label = listing ? listing.metadataRef : `Order #${order.id.toString()}`;
+    node.querySelector(".order-id").textContent = label;
 
     const statusBadge = node.querySelector(".status-badge");
     if (order.status === 0n) {
-        statusBadge.textContent = "On consignment";
+        statusBadge.textContent = "Funded";
         statusBadge.className = "status-badge status-funded";
     } else {
         statusBadge.textContent = "Released";
         statusBadge.className = "status-badge status-released";
     }
 
-    node.querySelector(".order-amount").textContent = formatEth(order.amount);
+    node.querySelector(".order-amount").textContent = formatGwei(order.amount);
 
     const counterparty = role === "buyer" ? order.seller : order.buyer;
     const counterpartyEl = node.querySelector(".order-counterparty");
@@ -604,7 +624,7 @@ function createOrderCardElement(order, role) {
                 await claimTimeout(order.id);
                 await Promise.all([refreshBuyerView(), refreshSellerView()]);
             });
-            actions.appendChild(tiemoutBtn);
+            actions.appendChild(timeoutBtn);
         }
     }
 
@@ -628,6 +648,24 @@ function renderInto(container, items, renderFn, emptyMessage) {
 
 
 // ---------------------------- Refreshing sections ----------------------------
+
+async function refreshWalletBalance() {
+    const balanceEl = document.getElementById("walletBalance");
+    const connectBtn = document.getElementById("connectMetaMask");
+    if (!balanceEl) return;
+
+    if (!currentAccount || !browserProvider) {
+        balanceEl.hidden = true;
+        connectBtn.hidden = false;
+        return;
+    }
+
+    const balance = await browserProvider.getBalance(currentAccount);
+    const rounded = parseFloat(formatGwei(balance)).toFixed(1);
+    balanceEl.textContent = `${rounded} Gwei`;
+    balanceEl.hidden = false;
+    connectBtn.hidden = true;
+}
 
 async function refreshActiveListings() {
     const container = document.getElementById("activeListings");
@@ -657,8 +695,8 @@ async function refreshSellerOrders() {
         return;
     }
 
-    const orders = await fetchOrdersAsSeller();
-    renderInto(container, orders, (o) => createOrderCardElement(o, "seller"), "You haven't received any orders yet.");
+    const [orders, listingsMap] = await Promise.all([fetchOrdersAsSeller(), fetchListingsMap()]);
+    renderInto(container, orders, (o) => createOrderCardElement(o, "seller", listingsMap), "You haven't received any orders yet.");
 }
 
 async function refreshBuyerOrders() {
@@ -668,8 +706,8 @@ async function refreshBuyerOrders() {
         return;
     }
 
-    const orders = await fetchOrdersAsBuyer();
-    renderInto(container, orders, (o) => createOrderCardElement(o, "buyer"), "You haven't placed any orders yet.");
+    const [orders, listingsMap] = await Promise.all([fetchOrdersAsBuyer(), fetchListingsMap()]);
+    renderInto(container, orders, (o) => createOrderCardElement(o, "buyer", listingsMap), "You haven't placed any orders yet.");
 }
 
 async function refreshWithdrawPanel() {
@@ -678,13 +716,13 @@ async function refreshWithdrawPanel() {
     if (!amountEl || !withdrawButton) return;
 
     if (!currentAccount) {
-        amountEl.textContent = "- ETH";
+        amountEl.textContent = "- Gwei";
         withdrawButton.disabled = true;
         return;
     }
 
     const pending = await fetchPendingWithdrawal();
-    amountEl.textContent = formatEth(pending);
+    amountEl.textContent = formatGwei(pending);
     withdrawButton.disabled = pending === 0n;
 }
 
@@ -697,7 +735,7 @@ async function refreshBuyerView() {
 }
 
 async function onAccountReady(account) {
-    await Promise.all([refreshSellerView(), refreshBuyerView()]);
+    await Promise.all([refreshSellerView(), refreshBuyerView(), refreshWalletBalance()]);
 }
 
 
@@ -766,6 +804,25 @@ if (withdrawButtonEl) {
     });
 }
 
+const refreshSellerOrdersButton = document.getElementById("refreshSellerOrders");
+if (refreshSellerOrdersButton) {
+    refreshSellerOrdersButton.addEventListener("click", refreshSellerOrders);
+}
+
+const refreshMyListingsButton = document.getElementById("refreshMyListings");
+if (refreshMyListingsButton) {
+    refreshMyListingsButton.addEventListener("click", refreshMyListings)
+}
+
+const refreshWithdrawPanelButton = document.getElementById("refreshWithdrawPanel");
+if (refreshWithdrawPanelButton) {
+    refreshWithdrawPanelButton.addEventListener("click", refreshWithdrawPanel);
+}
+
+const walletBalanceEl = document.getElementById("walletBalance");
+if (walletBalanceEl) {
+    walletBalanceEl.addEventListener("click", refreshWalletBalance);
+}
 
 // ---------------------------- Initial Loading ----------------------------
 

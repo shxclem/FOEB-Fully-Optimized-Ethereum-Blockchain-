@@ -32,6 +32,7 @@
         <div class="wallet">
           <span class="network-badge"><span class="network-dot" aria-hidden="true"></span>Sepolia</span>
           <input id="accountInfo" class="account-chip mono" readonly placeholder="Not connected"/>
+          <span id="walletBalance" class="btn btn-primary" hidden title="Click to refresh">- Gwei</span>
           <button id="connectMetaMask" class="btn btn-primary">Connect wallet</button>
         </div>
       </header>
@@ -48,8 +49,8 @@
             <h2 class="panel-title">New Listing</h2>
             <form id="createListingForm" class="form-grid">
               <label class="field">
-                <span class="field-label">Price (ETH)</span>
-                <input type="text" id="listingPrice" class="mono" placeholder="0.05" required/>
+                <span class="field-label">Price (Gwei)</span>
+                <input type="text" id="listingPrice" class="mono" placeholder="100" required/>
               </label>
 
               <label class="field field-span-2">
@@ -62,14 +63,20 @@
           </div>
 
           <div class="panel">
-            <h2 class="panel-title">My listings</h2>
+            <div class="panel-title-row">
+              <h2 class="panel-title">My listings</h2>
+              <button id="refreshMyListings" class="btn btn-ghost">Refresh</button>
+            </div>
             <div id="myListings" class="listing-grid" data-state="empty">
               <p class="empty-state">Connect your wallet to view your listings.</p>
             </div>
           </div>
 
           <div class="panel">
-            <h2 class="panel-title">Orders received</h2>
+            <div class="panel-title-row">
+              <h2 class="panel-title">Orders received</h2>
+              <button id="refreshSellerOrders" class="btn btn-ghost">Refresh</button>
+            </div>
             <div id="sellerOrders" class="order-list" data-state="empty">
               <p class="empty-state">Connect your wallet to view your sales orders.</p>
             </div>
@@ -78,11 +85,14 @@
           <div class="panel">
             <div class="panel-title-row">
               <h2 class="panel-title">Funds available</h2>
-              <button id="withdrawButton" class="btn btn-primary" disabled>Withdraw</button>
+              <div class="panel-title-actions">
+                <button id="refreshWithdrawPanel" class="btn btn-ghost">Refresh</button>
+                <button id="withdrawButton" class="btn btn-primary" disabled>Withdraw</button>
+              </div>
             </div>
             <p class="view-sub">
               Balance released to you, pending withdrawal:
-              <span id="withdrawAmount" class="mono">- ETH</span>
+              <strong><span id="withdrawAmount" class="mono">- Gwei</span></strong>
             </p>
           </div>
         </section>
@@ -115,7 +125,7 @@
       </main>
 
       <footer class="footer">
-        <span>EscrowManager Contract in Sepolia | </span>
+        <span>EscrowManager Contract in Sepolia</span>
         <span class="mono" id="contractAddressDisplay">0xdCeD9c616d18Aacf7c7d94479dE9d8ffe27971Ce</span>
       </footer>
     </div>
@@ -123,14 +133,15 @@
     <!-- Templated filled dynamically with app.js -->
      <template id="listingCardTemplate">
       <article class="card listing-card">
+        <span class="status-badge card-badge status-active">Active</span>
 
-        <div class="card-top">
-          <span class="price mono">- ETH</span>
-          <span class="status-badge status-active">Active</span>
-        </div>
-      
         <p class="listing-desc"></p>
 
+        <div class="price-row">
+          <span class="meta-label">Price</span>
+          <span class="price mono">- Gwei</span>
+        </div>
+        
         <div class="card-meta">
           <span class="meta-label">Seller</span>
           <span class="meta-value mono seller-address"></span>

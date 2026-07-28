@@ -227,6 +227,14 @@ main {
   gap: 10px;
 }
 
+#walletBalance {
+  cursor: pointer;
+}
+
+#walletBalancer:hover {
+  opacity: 0.85;
+}
+
 .network-badge {
   display: inline-flex;
   align-items: center;
@@ -358,6 +366,12 @@ main {
   margin-bottom: 14px;
 }
 
+.panel-title-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .panel-title-row .panel-title {
   margin-bottom: 0;
 }
@@ -432,6 +446,7 @@ main {
 }
 
 .listing-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -450,18 +465,25 @@ main {
   justify-content: space-between;
 }
 
+.price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .price {
-  font-size: 17px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--ink);
+  color: var(--muted);
 }
 
 .listing-desc {
   margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.45;
-  flex: 1;
+  padding-right: 76px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .card-meta {
@@ -510,6 +532,12 @@ main {
   padding: 5px 12px 5px 10px;
   border-radius: var(--radius-sm);
   clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+
+.card-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .status-badge::before {
