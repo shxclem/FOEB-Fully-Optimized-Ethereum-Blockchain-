@@ -20,13 +20,13 @@
     "@ethereumjs/tx": "^10.1.2",
     "@ethereumjs/util": "^10.1.2",
     "@metamask/eth-sig-util": "^8.2.0",
-    "@paulmillr/trusted-setups": "^0.1.2",
+    "@paulmillr/trusted-setups": "^0.3.0",
     "buffer": "^6.0.3",
     "crypto-browserify": "^3.12.1",
     "eth-crypto": "^3.1.0",
     "ethers": "^6.13.7",
     "kzg-wasm": "^0.4.0",
-    "micro-eth-signer": "^0.14.0",
+    "micro-eth-signer": "^0.20.0",
     "viem": "^2.55.16",
     "vite-plugin-node-polyfills": "^0.24.0"
   }

@@ -5,7 +5,7 @@ import { createWalletClient, http, createPublicClient } from "viem";
 import { sepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
-import { KZG as microEthKZG } from "micro-eth-signer/advanced/kzg.js";
+import { KZG as microEthKZG } from "micro-eth-signer/kzg.js";
 import { trustedSetup } from "@paulmillr/trusted-setups/fast-kzg.js";
 import { createBlob4844Tx } from "@ethereumjs/tx";
 import { Common, Sepolia, Hardfork } from "@ethereumjs/common";
