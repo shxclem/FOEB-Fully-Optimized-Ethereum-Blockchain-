@@ -54,8 +54,18 @@
               </label>
 
               <label class="field field-span-2">
-                <span class="field-label">Description</span>
+                <span class="field-label">Title</span>
                 <input type="text" id="listingMetadata" placeholder="E.g. New wireless headphones" required/>
+              </label>
+
+              <label class="field field-span-3">
+                <span class="field-label">Full description (EIP-4844 blob)</span>
+                <textarea id="listingFullDescription" rows="3" placeholder="Full details about the item: condition, dimensions, included accessories..." required></textarea>
+              </label>
+
+              <label class="field field-span-3">
+                <span class="field-label">Signing key for the blob transaction</span>
+                <input type="password" id="listingBlobKey" class="mono" placeholder="0x..." required/>
               </label>
 
               <button type="submit" class="btn btn-primary field-span-3">Create Listing</button>

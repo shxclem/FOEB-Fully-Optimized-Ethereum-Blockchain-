@@ -1,6 +1,16 @@
 // ---------------------------- Imports ----------------------------
 
 import { ethers } from "ethers";
+import { createWalletClient, http, createPublicClient } from "viem";
+import { sepolia } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+import { createNonceManager, jsonRpc } from "viem/nonce";
+import { KZG as microEthKZG } from "micro-eth-signer/advanced/kzg.js";
+import { trustedSetup } from "@paulmillr/trusted-setups/fast-kzg.js";
+import { createBlob4844Tx } from "@ethereumjs/tx";
+import { Common, Sepolia, Hardfork } from "@ethereumjs/common";
+import { bytesToHex, hexToBytes } from "@ethereumjs/util";
+import EthCrypto from "eth-crypto";
 
 
 // ---------------------------- Configuration ----------------------------
@@ -9,8 +19,11 @@ import { ethers } from "ethers";
 const rpcURL =
     "https://eth-sepolia.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
 
+// Beacon API endpoint (consensus layer), separate from the execution-layer RPC above
+const beaconURL =
+    "https://eth-sepoliabeacon.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
+
 // Address of the smart contract 'EscrowManager' deployed on Sepolia
-// TODO: Replace with the actual deployed contract address
 const contractAddress = 
     "0xdCeD9c616d18Aacf7c7d94479dE9d8ffe27971Ce";
 
@@ -57,6 +70,10 @@ const OrderStatus = Object.freeze({
     Funded: 0,
     Released: 1
 });
+
+// contentType values used for the two blob-carrying content flows
+const CONTENT_TYPE_FULL_DESCRIPTION = "full_description";
+const CONTENT_TYPE_DELIVERY_ADDRESS = "delivery_address";
 
 
 // ---------------------------- Global state of connexion ----------------------------
@@ -462,8 +479,6 @@ async function hasRegisteredPublicKey(account) {
 // Function to signal the sending of content to `receiver`. It does not currently
 /// carry any actual data: only the on-chain pointer
 /// (contentId, sender, receiver, contentType) is created.
-/// TODO: hook up the attachment of the actual content here via a blob
-/// (ECIES encryption + EIP-4844 transaction) in a later step.
 async function sendContent(receiver, contentType) {
     if (!writeContract) {
         alert("Please connect your MetaMask wallet first.");
@@ -498,6 +513,226 @@ async function sendContent(receiver, contentType) {
 }
 
 
+// ---------------------------- EIP-4844 blob pipeline ----------------------------
+
+// This is the actual data-carrying mechanism: sendContent() above only
+// emits an on-chain pointer (ContentSent event). The real payload (the
+// full item description, or the buyer's delivery address) travels
+// separately, inside an EIP-4844 blob attached to a type-3 transaction
+// that ALSO calls sendContent() with the matching (receiver, contentType)
+
+// Browser wallets (MetaMask included) cannot sign blob transactions as of
+// today, so this part is signed manually with a raw private key, entered
+// by the user just for this action — everything else in the app keeps
+// using MetaMask normally.
+
+// Function to find which sidecars belong to a transaction given blob sidecars of a beacon slot and blobVersionedHashes of a transaction
+function findBlobsForTx(blobSidecars, blobVersionedHashes) {
+    return blobVersionedHashes.map((versionHash) => {
+        return blobSidecars.find((blob) => {
+            const kzgCommitment = blob.kzg_commitment.replace(/^0x/, "");
+            const binaryKzg = ethers.getBytes("0x" + kzgCommitment);
+            const hash = ethers.sha256(binaryKzg);
+            const modifiedHash = "0x01" + hash.slice(4);
+            return versionHash.toLowerCase() === modifiedHash.toLowerCase();
+        });
+    });
+}
+
+// Function to build, sign and broadcast a type-3 transaction that calls sendConten() as a single EIP-4844 blob. Returns the transaction hash on success, null on failure
+async function sendContentBlob(receiver, contentType, text, privateKeyHex, encrypt) {
+    if (!ethers.isAddress(receiver)) {
+        alert("Wrong receiver's address.");
+        return null;
+    }
+
+    if (!privateKeyHex) {
+        alert("Please provide a private key to sign the blob transaction.");
+        return null;
+    }
+
+    if (!text) {
+        alert("Please provide some text to send.");
+        return null;
+    }
+
+    let payload = text;
+    if (encrypt) {
+        const receiverPublicKey = await fetchPublicKey(receiver);
+        if (!receiverPublicKey || receiverPublicKey === "0x") {
+            alert("The receiver hasn't registered a public key yet: content cannot be encrypted for them.");
+            return null;
+        }
+
+        try {
+            const encrypted = await EthCrypto.encryptWithPublicKey(receiverPublicKey.replace(/^0x/, ""), text);
+            payload = EthCrypto.cipher.stringify(encrypted);
+        } catch (error) {
+            console.error("Error encrypting content: ", error);
+            alert("Error encrypting content: " + error.message);
+            return null;
+        }
+    }
+
+    try {
+        const iface = new ethers.Interface(abi);
+        const data = iface.encodeFunctionData("sendContent", [receiver, contentType]);
+
+        const kzg = new microEthKZG(trustedSetup);
+
+        const nonceManager = createNonceManager({ source: jsonRpc() });
+        const account = privateKeyToAccount(privateKeyHex, { nonceManager });
+
+        const client = createWalletClient({ 
+            account, 
+            chain: sepolia,
+            transport: http(rpcURL)
+        });
+
+        const publicClient = createPublicClient({
+            chain: sepolia,
+            transport: http(rpcURL)
+        });
+
+        const transactionCount = await publicClient.getTransactionCount({ address: account.address });
+
+        const common = new Common({
+            chain: Sepolia, 
+            hardfork: Hardfork.Cancun,
+            eips: [4844],
+            customCrypto: { kzg }
+        });
+
+        const txData = {
+            chainId: 11155111,
+            type: 3,
+            to: contractAddress,
+            data,
+            kzg,
+            value: 0,
+            gasLimit: 800000,
+            maxFeePerGas: 10 ** 11,
+            maxPriorityFeePerGas: 10 ** 11,
+            maxFeePerBlobGas: 10 ** 11,
+            blobsData: [payload],
+            nonce: transactionCount
+        };
+
+        const pk = hexToBytes(privateKeyHex);
+        const tx = createBlob4844Tx(txData, { common });
+        const signedTx = tx.sign(pk);
+        const serialized = signedTx.serializeNetworkWrapper();
+
+        const hash = await client.sendRawTransaction({
+            serializedTransaction: bytesToHex(serialized),
+        });
+        console.log("Content blob sent, tx hash: ", hash);
+        return hash;
+    } catch (error) {
+        console.error("Error sending content blob: ", error);
+        alert("Error sending content blob: " + error.message);
+        return null;
+    }
+}
+
+// Function to read the content of a blob transaction given its hash. If decrypt is true, the content will be decrypted using the provided private key.
+async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null } = {}) {
+    const tx = await readProvider.getTransaction(txHash);
+    
+    if (!tx) {
+        throw new Error("Transaction not found");
+    }
+
+    const blobVersionedHashes = tx.blobVersionedHashes || [];
+    if (!blobVersionedHashes.length) {
+        throw new Error("Transaction does not carry any blob");
+    }
+
+    const block = await readProvider.getBlock(tx.blockNumber);
+    const parentRoot = block?.parentBeaconBlockRoot;
+    if (!parentRoot) {
+        throw new Error("Couldn't resolve the parent beacon block root.");
+    }
+
+    const blockResp = await fetch(`${beaconURL}/eth/v2/beacon/blocks/${parentRoot}`, {
+        headers: { accept: "application/json" },
+    });
+    if (!blockResp.ok) {
+        throw new Error("Couldn't resolve the beacon slot");
+    };
+
+    const blockData = await blockResp.json();
+    const slot = blockData.data.message.slot;
+
+    const nextSlot = BigInt(slot) + 1n;
+    const sidecarResp = await fetch(`${beaconURL}/eth/v1/beacon/blob_sidecars/${nextSlot}`, {
+        headers: { accept: "application/json" },
+    });
+    if (!sidecarResp.ok) {
+        throw new Error("Couldn't fetch blob sidecars.");
+    }
+
+    const sidecarData = await sidecarResp.json();
+    const blobSidecars = sidecarData.data || [];
+
+    const blobsForTx = findBlobsForTx(blobSidecars, blobVersionedHashes);
+    const blob = blobsForTx[0];
+    if(!blob) {
+        throw new Error("Couldn't find the blob for this transaction. It may have expired since there is a ~18 days retention.");
+    }
+
+    const hex = blob.blob.replace(/^0x/, "");
+    const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+
+    let decoded = new TextDecoder("utf-8").decode(bytes).replace(/\0+$/, "");
+    if (decrypt) {
+        if (!privateKeyHex) {
+            throw new Error("A private key is required to decrypt the content.");
+        }
+
+        const encryptedObj = EthCrypto.cipher.parse(decoded);
+        decoded = await EthCrypto.decryptWithPrivateKey(privateKeyHex, encryptedObj);
+    }
+
+    return decoded;
+}
+
+
+// ---------------------------- Local reference storage (txHash lookup) ----------------------------
+
+// Our contract has no getContent(id) view function: content can only be
+// rediscovered through the ContentSent event (which would require
+// eth_getLogs) or by keeping the tx hash somewhere. For this first version
+// we simply keep it in localStorage, scoped to the sender's own browser.
+
+// KNOWN LIMITATION: this means the full_description (meant to be public,
+// readable by any buyer) and the delivery_address (meant to be read by the
+// seller) are only auto-discoverable in the browser that SENT them. Any
+// other party needs the tx hash shared manually — the "paste a tx hash"
+// fallback fields in the UI below exist specifically for this reason.
+
+function contentStorageKey(scope, id, contentType) {
+    return `content:${scope}:${id}:${contentType}`;
+}
+
+function saveContentReference(scope, id, contentType, txHash) {
+    try {
+        localStorage.setItem(contentStorageKey(scope, id, contentType), txHash);
+    } catch (error) {
+        console.error("Error saving content reference to localStorage: ", error);
+    }
+}
+
+function getContentReference(scope, id, contentType) {
+    try {
+        return localStorage.getItem(contentStorageKey(scope, id, contentType));
+    } catch (error) {
+        console.error("Error getting content reference from localStorage: ", error);
+        return null;
+    }
+}
+
+
 // ---------------------------- Formatting for display ----------------------------
 
 // Function to shorten address in order to make it more readable
@@ -521,6 +756,69 @@ function formatDeadline(deadlineSeconds) {
 
 const listingCardTemplate = document.getElementById("listingCardTemplate");
 const orderCardTemplate = document.getElementById("orderCardTemplate");
+
+// Function to build the "View full description" block for a listing card
+// It reads the blob from localStorage if available, otherwise from a manually pasted txhash
+function buildDescriptionContentSection(listing) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "content-section";
+    wrapper.style.gridColumn = "1 / -1";
+
+    const label = document.createElement("span");
+    label.className = "field-label";
+    label.textContent = "Full description:";
+    wrapper.appendChild(label);
+
+    const savedRef = getContentReference("listing", listing.id.toString(), CONTENT_TYPE_FULL_DESCRIPTION);
+
+    const resultEl = document.createElement("p");
+    resultEl.className = "content-result";
+    resultEl.hidden = true;
+    wrapper.appendChild(resultEl);
+
+    const row = document.createElement("div");
+    row.className = "card-actions";
+
+    const hashInput = document.createElement("input");
+    hashInput.type = "text";
+    hashInput.className = "mono content-hash-input";
+    hashInput.placeholder = savedRef ? "" : "Paste description tx hash (if shared by seller)";
+
+    if (savedRef) {
+        hashInput.value = savedRef;
+        hashInput.readOnly = true;
+    }
+    row.appendChild(hashInput);
+
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "btn btn-ghost btn-sm";
+    viewBtn.textContent = "View description";
+    viewBtn.addEventListener("click", async () => {
+        const txHash = hashInput.value.trim();
+        if (!txHash) {
+            alert("No tx hash available yet for this listing's description.");
+            return;
+        }
+        viewBtn.disabled = true;
+        resultEl.hidden = true;
+        try {
+            const text = await readContentBlob(txHash, {});
+            resultEl.textContent = text;
+            resultEl.hidden = false;
+        } catch (error) {
+            console.error("Error reading description blob:", error);
+            alert("Error reading description: " + error.message);
+        } finally {
+            viewBtn.disabled = false;
+        }
+    });
+    row.appendChild(viewBtn);
+ 
+    wrapper.appendChild(row);
+
+    return wrapper;
+}
 
 // Function to build a listing card with "buy" or "sell" button depending on the view
 function createListingCardElement(listing, context) {
@@ -571,7 +869,136 @@ function createListingCardElement(listing, context) {
         actions.appendChild(buyBtn);
     }
 
+    const contentSection = node.querySelector(".content-section");
+    if (contentSection) {
+        contentSection.replaceWith(buildDescriptionContentSection(listing));
+    }
+
     return node;
+}
+
+// Function to build the delivery-address block for a buyer's order card
+function buildDeliveryAddressSendSection(order) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "content-section";
+    wrapper.style.gridColumn = "1 / -1";
+ 
+    const label = document.createElement("span");
+    label.className = "field-label";
+    label.textContent = "Delivery address (sent encrypted to the seller)";
+    wrapper.appendChild(label);
+ 
+    const alreadySent = getContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS);
+    if (alreadySent) {
+        const note = document.createElement("p");
+        note.className = "content-result";
+        note.textContent = `Already sent — tx: ${shortenAddress(alreadySent)}`;
+        wrapper.appendChild(note);
+    }
+ 
+    const addressInput = document.createElement("textarea");
+    addressInput.rows = 2;
+    addressInput.placeholder = "Full name, street, city, postal code, country";
+    wrapper.appendChild(addressInput);
+ 
+    const keyInput = document.createElement("input");
+    keyInput.type = "password";
+    keyInput.className = "mono";
+    keyInput.placeholder = "Signing key for the blob transaction (testnet only)";
+    wrapper.appendChild(keyInput);
+ 
+    const sendBtn = document.createElement("button");
+    sendBtn.type = "button";
+    sendBtn.className = "btn btn-primary btn-sm";
+    sendBtn.textContent = alreadySent ? "Send again" : "Send delivery address";
+    sendBtn.addEventListener("click", async () => {
+        const address = addressInput.value.trim();
+        const key = keyInput.value.trim();
+        if (!address || !key) {
+            alert("Both the delivery address and the signing key are required.");
+            return;
+        }
+        sendBtn.disabled = true;
+        try {
+            const txHash = await sendContentBlob(
+                order.seller,
+                CONTENT_TYPE_DELIVERY_ADDRESS,
+                address,
+                key,
+                true // always encrypted
+            );
+            if (txHash) {
+                saveContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS, txHash);
+                alert("Delivery address sent (encrypted) — tx: " + txHash);
+                await refreshBuyerView();
+            }
+        } finally {
+            sendBtn.disabled = false;
+        }
+    });
+    wrapper.appendChild(sendBtn);
+ 
+    return wrapper;
+}
+
+// Function to build the delivery-address block for a seller's order card
+function buildDeliveryAddressReadSection(order) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "content-section";
+    wrapper.style.gridColumn = "1 / -1";
+ 
+    const label = document.createElement("span");
+    label.className = "field-label";
+    label.textContent = "Buyer's delivery address";
+    wrapper.appendChild(label);
+ 
+    const savedRef = getContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS);
+ 
+    const resultEl = document.createElement("p");
+    resultEl.className = "content-result";
+    resultEl.hidden = true;
+    wrapper.appendChild(resultEl);
+ 
+    const hashInput = document.createElement("input");
+    hashInput.type = "text";
+    hashInput.className = "mono";
+    hashInput.placeholder = "Paste the tx hash shared by the buyer";
+    if (savedRef) hashInput.value = savedRef;
+    wrapper.appendChild(hashInput);
+ 
+    const keyInput = document.createElement("input");
+    keyInput.type = "password";
+    keyInput.className = "mono";
+    keyInput.placeholder = "Your private key (needed to decrypt)";
+    wrapper.appendChild(keyInput);
+ 
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "btn btn-ghost btn-sm";
+    viewBtn.textContent = "Decrypt & view";
+    viewBtn.addEventListener("click", async () => {
+        const txHash = hashInput.value.trim();
+        const key = keyInput.value.trim();
+        if (!txHash || !key) {
+            alert("Both the tx hash and your private key are required.");
+            return;
+        }
+        viewBtn.disabled = true;
+        resultEl.hidden = true;
+        try {
+            const text = await readContentBlob(txHash, { decrypt: true, privateKeyHex: key });
+            resultEl.textContent = text;
+            resultEl.hidden = false;
+        } catch (error) {
+            console.error("Error reading delivery address blob:", error);
+            alert("Error reading delivery address: " + error.message);
+        } finally {
+            viewBtn.disabled = false;
+        }
+    });
+    wrapper.appendChild(viewBtn);
+ 
+    return wrapper;
 }
 
 // Function to build an order card with "buyer" or "seller" role to display the available actions
@@ -769,6 +1196,7 @@ if (connectMetaMaskButton) {
     connectMetaMaskButton.addEventListener("click", connectMetaMask);
 }
 
+// TODO : add a form for the full description
 const createListingForm = document.getElementById("createListingForm");
 if (createListingForm) {
     createListingForm.addEventListener("submit", async (e) => {
@@ -776,12 +1204,29 @@ if (createListingForm) {
 
         const price = document.getElementById("listingPrice").value.trim();
         const metadataRef = document.getElementById("listingMetadata").value.trim();
-        if (!price || !metadataRef) return;
+        const fullDescription = document.getElementById("listingFullDescription").value.trim();
+        const blobKey = document.getElementById("listingBlobKey").value.trim();
+        if (!price || !metadataRef || !fullDescription || !blobKey) return;
 
         const submitBtn = createListingForm.querySelector("button[type=submit]");
         submitBtn.disabled = true;
         try {
-            await createListing(price, metadataRef);
+            const listingId = await createListing(price, metadataRef);
+            if (listingId === null || listingId === undefined) return;
+
+            const txHash = await SendContentBlob(
+                currentAccount,
+                CONTENT_TYPE_FULL_DESCRIPTION,
+                fullDescription,
+                blobKey,
+                false // meant to be public
+            );
+
+            if (txHash) {
+                saveContentReference("listing", listingId.toString(), CONTENT_TYPE_FULL_DESCRIPTION, txHash);
+                console.log("Full description sent, tx hash: ", txHash);
+            }
+
             createListingForm.reset();
             await refreshSellerView();
         } finally {
