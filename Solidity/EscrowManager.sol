@@ -237,4 +237,8 @@ contract EscrowManager {
     function getContentBlock(uint256 relatedId, string calldata contentType) external view returns (uint256) {
         return contentBlockNumber[keccak256(abi.encodePacked(relatedId, contentType))];
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 09579ebd53f53e35ef6e7736f95b8ec03b8e1afa
