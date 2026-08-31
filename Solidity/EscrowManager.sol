@@ -61,6 +61,8 @@ contract EscrowManager {
 
     uint256 public contentCount;
 
+    /// @notice Block number where the blob transaction containing the content (listingId or orderId + contentType) was mined
+    mapping(bytes32 => uint256) public contentBlockNumber;
 
     // ---------------------------- Events ----------------------------
 
@@ -207,10 +209,13 @@ contract EscrowManager {
 
     /// @param receiver The address of the receiver (buyer or seller) of the content.
     /// @param contentType The type of the content (e.g., "listing_image", "shipment_proof", "message").
-    function sendContent(address receiver, string calldata contentType) external returns (uint256 contentId) {
+    /// @param relatedId The ID of the related entity (e.g., listing ID, order ID).
+    function sendContent(address receiver, string calldata contentType, uint256 relatedId) external returns (uint256 contentId) {
         if (receiver == address(0)) revert InvalidReceiver();
 
         contentId = contentCount++;
+        bytes32 key = keccak256(abi.encodePacked(relatedId, contentType));
+        contentBlockNumber[key] = block.number;
 
         emit ContentSent(contentId, msg.sender, receiver, contentType);
     }
@@ -227,5 +232,9 @@ contract EscrowManager {
 
     function getPublicKey(address account) external view returns (bytes memory) {
         return publicKeys[account];
+    }
+
+    function getContentBlock(uint256 relatedId, string calldata contentType) external view returns (uint256) {
+        return contentBlockNumber[keccak256(abi.encodePacked(relatedId, contentType))];
     }
 }

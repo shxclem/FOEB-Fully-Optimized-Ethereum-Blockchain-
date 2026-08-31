@@ -15,6 +15,9 @@ import EthCrypto from "eth-crypto";
 
 // ---------------------------- Configuration ----------------------------
 
+// Unique KZG instance, used for every blob sending
+const kzg = new microEthKZG(trustedSetup);
+
 // read-only RPC endpoint to browse listings even if the user is not connected to a wallet
 const rpcURL =
     "https://eth-sepolia.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
@@ -23,9 +26,13 @@ const rpcURL =
 const beaconURL =
     "https://eth-sepoliabeacon.g.alchemy.com/v2/MAqI1ftDOuHcQYDb0vdi3";
 
+// Endpoint used to send blob transactions
+const blobSendRpcURL = 
+    "https://ethereum-sepolia-rpc.publicnode.com";
+
 // Address of the smart contract 'EscrowManager' deployed on Sepolia
 const contractAddress = 
-    "0xdCeD9c616d18Aacf7c7d94479dE9d8ffe27971Ce";
+    "0xeC20747d5C04F0A73ef2627970792d9C5810e6F0";
 
 // Complete ABI of the smart contract
 const abi = [
@@ -50,9 +57,10 @@ const abi = [
     
     // Content - Public keys
     "function registerPublicKey(bytes publicKey)",
-    "function sendContent(address receiver, string contentType) returns (uint256 contentId)",
+    "function sendContent(address receiver, string contentType, uint256 relatedId) returns (uint256 contentId)",
     "function getPublicKey(address account) view returns (bytes)",
     "function contentCount() view returns (uint256)",
+    "function getContentBlock(uint256 relatedId, string contentType) view returns (uint256)",
 
     // Events
     "event ListingCreated(uint256 indexed listingId, address indexed seller, uint256 price, string metadataRef)",
@@ -170,6 +178,7 @@ if (window.ethereum) {
             writeContract = null;
             console.log("Metamask disconnected");
             await refreshWalletBalance();
+            await refreshPublicKeyStatus();
             return;
         }
         currentAccount = ethers.getAddress(accounts[0]);
@@ -451,7 +460,7 @@ async function withdrawFunds() {
 // Function to register the public key of the connected account (one-time function)
 async function registerPublicKey(publicKeyHex) {
     if (!writeContract) {
-        alert("Please connect your MetaMask wallet first.");
+        console.warn("Cannot register public key: wallet not connected.");
         return;
     }
 
@@ -461,7 +470,21 @@ async function registerPublicKey(publicKeyHex) {
         console.log("Public key registered for ", currentAccount);
     } catch (error) {
         console.error("Error registering the public key :", error);
-        alert("Error registering the public key :", error.message);
+    }
+}
+
+async function ensurePublicKeyRegistered(signingKeyHex) {
+    if (!currentAccount || !writeContract) return;
+
+    try {
+        const alreadyRegistered = await hasRegisteredPublicKey(currentAccount);
+        if (alreadyRegistered) return;
+
+        const publicKeyHex = derivePublicKeyFromPrivateKey(signingKeyHex);
+        await registerPublicKey(publicKeyHex);
+        await refreshPublicKeyStatus();
+    } catch (error) {
+        console.error("Error auto-registering public key:", error);
     }
 }
 
@@ -476,10 +499,26 @@ async function hasRegisteredPublicKey(account) {
     return key && key !== "0x";
 }
 
+
+// Function to derive the uncompressed secp256k1 public key from a raw private key
+function derivePublicKeyFromPrivateKey(privateKeyHex) {
+    let pk = (privateKeyHex || "").trim();
+    if (pk.startsWith("0x") || pk.startsWith("0X")) {
+        pk = pk.slice(2);
+    }
+
+    if (!/^[0-9a-fA-F]{64}$/.test(pk)) {
+        throw new Error("Invalid private key format (expected 0x followed by 64 hex characters).");
+    }
+
+    const publicKey = EthCrypto.publicKeyByPrivateKey("0x" + pk);
+    return "0x" + publicKey.replace(/^0x/, "");
+}
+
 // Function to signal the sending of content to `receiver`. It does not currently
 /// carry any actual data: only the on-chain pointer
 /// (contentId, sender, receiver, contentType) is created.
-async function sendContent(receiver, contentType) {
+async function sendContent(receiver, contentType, relatedId) {
     if (!writeContract) {
         alert("Please connect your MetaMask wallet first.");
         return;
@@ -491,7 +530,7 @@ async function sendContent(receiver, contentType) {
     }
 
     try {
-        const tx = await writeContract.sendContent(receiver, contentType);
+        const tx = await writeContract.sendContent(receiver, contentType, relatedId);
         const receipt = await tx.wait();
 
         const event = receipt.logs.map((log) => {
@@ -539,8 +578,8 @@ function findBlobsForTx(blobSidecars, blobVersionedHashes) {
     });
 }
 
-// Function to build, sign and broadcast a type-3 transaction that calls sendConten() as a single EIP-4844 blob. Returns the transaction hash on success, null on failure
-async function sendContentBlob(receiver, contentType, text, privateKeyHex, encrypt) {
+// Function to build, sign and broadcast a type-3 transaction that calls sendContent() as a single EIP-4844 blob. Returns the transaction hash on success, null on failure
+async function sendContentBlob(receiver, contentType, relatedId, text, privateKeyHex, encrypt) {
     if (!ethers.isAddress(receiver)) {
         alert("Wrong receiver's address.");
         return null;
@@ -550,6 +589,19 @@ async function sendContentBlob(receiver, contentType, text, privateKeyHex, encry
         alert("Please provide a private key to sign the blob transaction.");
         return null;
     }
+
+   let normalizedPrivateKeyHex = privateKeyHex.trim();
+
+    if (!normalizedPrivateKeyHex.startsWith("0x")) {
+        normalizedPrivateKeyHex = "0x" + normalizedPrivateKeyHex;
+    }
+
+    if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedPrivateKeyHex)) {
+        alert("Invalid private key: it must be 0x followed by 64 hexadecimal characters.");
+        return null;
+    }
+
+    privateKeyHex = normalizedPrivateKeyHex;
 
     if (!text) {
         alert("Please provide some text to send.");
@@ -574,11 +626,16 @@ async function sendContentBlob(receiver, contentType, text, privateKeyHex, encry
         }
     }
 
+    function frameForBlob(str) {
+        const byteLength = new TextEncoder().encode(str).length;
+        return byteLength.toString(16).padStart(8, "0") + str;
+    }
+
+    payload = frameForBlob(payload);
+
     try {
         const iface = new ethers.Interface(abi);
-        const data = iface.encodeFunctionData("sendContent", [receiver, contentType]);
-
-        const kzg = new microEthKZG(trustedSetup);
+        const data = iface.encodeFunctionData("sendContent", [receiver, contentType, relatedId]);
 
         const nonceManager = createNonceManager({ source: jsonRpc() });
         const account = privateKeyToAccount(privateKeyHex, { nonceManager });
@@ -586,12 +643,12 @@ async function sendContentBlob(receiver, contentType, text, privateKeyHex, encry
         const client = createWalletClient({ 
             account, 
             chain: sepolia,
-            transport: http(rpcURL)
+            transport: http(blobSendRpcURL)
         });
 
         const publicClient = createPublicClient({
             chain: sepolia,
-            transport: http(rpcURL)
+            transport: http(blobSendRpcURL)
         });
 
         const transactionCount = await publicClient.getTransactionCount({ address: account.address });
@@ -626,6 +683,11 @@ async function sendContentBlob(receiver, contentType, text, privateKeyHex, encry
         const hash = await client.sendRawTransaction({
             serializedTransaction: bytesToHex(serialized),
         });
+
+        console.log("Blob tx broadcasted, waiting for confirmation:", hash);
+        await publicClient.waitForTransactionReceipt({ hash });
+        const rawTxHex = bytesToHex(serialized);
+
         console.log("Content blob sent, tx hash: ", hash);
         return hash;
     } catch (error) {
@@ -633,6 +695,23 @@ async function sendContentBlob(receiver, contentType, text, privateKeyHex, encry
         alert("Error sending content blob: " + error.message);
         return null;
     }
+}
+
+/// Deletes the padding done by @ethereumjs/util when packing the blob
+function unpackBlobBytes(blobHex) {
+    const hex = blobHex.replace(/^0x/, "");
+    const raw = new Uint8Array(hex.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
+
+    const FIELD_ELEMENTS = 4096;
+    const BYTES_PER_ELEMENT = 32;
+    const USABLE_BYTES = 31;
+
+    const out = new Uint8Array(FIELD_ELEMENTS * USABLE_BYTES);
+    for (let i = 0; i < FIELD_ELEMENTS; i++) {
+        const chunkStart = i * BYTES_PER_ELEMENT;
+        out.set(raw.subarray(chunkStart, chunkStart + USABLE_BYTES), i * USABLE_BYTES);
+    }
+    return out;
 }
 
 // Function to read the content of a blob transaction given its hash. If decrypt is true, the content will be decrypted using the provided private key.
@@ -681,10 +760,14 @@ async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null }
         throw new Error("Couldn't find the blob for this transaction. It may have expired since there is a ~18 days retention.");
     }
 
-    const hex = blob.blob.replace(/^0x/, "");
-    const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+    const bytes = unpackBlobBytes(blob.blob);
 
-    let decoded = new TextDecoder("utf-8").decode(bytes).replace(/\0+$/, "");
+    const headerLength = 8; // 8 caractères hex = longueur du payload en octets
+    const headerStr = new TextDecoder("utf-8").decode(bytes.slice(0, headerLength));
+    const payloadByteLength = parseInt(headerStr, 16);
+    const payloadBytes = bytes.slice(headerLength, headerLength + payloadByteLength);
+
+    let decoded = new TextDecoder("utf-8").decode(payloadBytes);
     if (decrypt) {
         if (!privateKeyHex) {
             throw new Error("A private key is required to decrypt the content.");
@@ -698,38 +781,49 @@ async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null }
 }
 
 
-// ---------------------------- Local reference storage (txHash lookup) ----------------------------
+// ---------------------------- Retrieving blob transactions hashes ----------------------------
 
-// Our contract has no getContent(id) view function: content can only be
-// rediscovered through the ContentSent event (which would require
-// eth_getLogs) or by keeping the tx hash somewhere. For this first version
-// we simply keep it in localStorage, scoped to the sender's own browser.
+/// Retrieves the hash of the blob transaction associated with `relatedId` (a
+/// `listingId` or an `orderId`) and `contentType` by reading the block number
+/// recorded on-chain and then scanning the transactions in that specific
+/// block to find the corresponding `sendContent` call.
+/// Works from any browser, without local state.
 
-// KNOWN LIMITATION: this means the full_description (meant to be public,
-// readable by any buyer) and the delivery_address (meant to be read by the
-// seller) are only auto-discoverable in the browser that SENT them. Any
-// other party needs the tx hash shared manually — the "paste a tx hash"
-// fallback fields in the UI below exist specifically for this reason.
-
-function contentStorageKey(scope, id, contentType) {
-    return `content:${scope}:${id}:${contentType}`;
-}
-
-function saveContentReference(scope, id, contentType, txHash) {
-    try {
-        localStorage.setItem(contentStorageKey(scope, id, contentType), txHash);
-    } catch (error) {
-        console.error("Error saving content reference to localStorage: ", error);
-    }
-}
-
-function getContentReference(scope, id, contentType) {
-    try {
-        return localStorage.getItem(contentStorageKey(scope, id, contentType));
-    } catch (error) {
-        console.error("Error getting content reference from localStorage: ", error);
+async function findContentTxHash(relatedId, contentType) {
+    const blockNumber = await readContract.getContentBlock(relatedId, contentType);
+    if (blockNumber === 0n) {
         return null;
     }
+
+    const block = await readProvider.getBlock(blockNumber, true);
+    if (!block) {
+        return null;
+    }
+
+    const iface = new ethers.Interface(abi);
+
+    for (const tx of block.prefetchedTransactions) {
+        if (!tx.to || tx.to.toLowerCase() !== contractAddress.toLowerCase()) {
+            continue;
+        }
+
+        let parsed;
+        try {
+            parsed = iface.parseTransaction({ data: tx.data });
+        } catch {
+            continue;
+        }
+
+        if (
+            parsed?.name === "sendContent" &&
+            parsed.args.contentType === contentType &&
+            parsed.args.relatedId.toString() === relatedId.toString()
+        ) {
+            return tx.hash;
+        }
+    }
+
+    return null;
 }
 
 
@@ -757,19 +851,29 @@ function formatDeadline(deadlineSeconds) {
 const listingCardTemplate = document.getElementById("listingCardTemplate");
 const orderCardTemplate = document.getElementById("orderCardTemplate");
 
+function buildLabeledField(labelText, inputElement, extraClass) {
+    const field = document.createElement("label");
+    field.className = extraClass ? `field ${extraClass}` : "field";
+
+    const fieldLabel = document.createElement("span");
+    fieldLabel.className = "field-label";
+    fieldLabel.textContent = labelText;
+
+    field.appendChild(fieldLabel);
+    field.appendChild(inputElement);
+    return field;
+}
+
 // Function to build the "View full description" block for a listing card
 // It reads the blob from localStorage if available, otherwise from a manually pasted txhash
 function buildDescriptionContentSection(listing) {
     const wrapper = document.createElement("div");
     wrapper.className = "content-section";
-    wrapper.style.gridColumn = "1 / -1";
 
     const label = document.createElement("span");
     label.className = "field-label";
     label.textContent = "Full description:";
     wrapper.appendChild(label);
-
-    const savedRef = getContentReference("listing", listing.id.toString(), CONTENT_TYPE_FULL_DESCRIPTION);
 
     const resultEl = document.createElement("p");
     resultEl.className = "content-result";
@@ -779,30 +883,19 @@ function buildDescriptionContentSection(listing) {
     const row = document.createElement("div");
     row.className = "card-actions";
 
-    const hashInput = document.createElement("input");
-    hashInput.type = "text";
-    hashInput.className = "mono content-hash-input";
-    hashInput.placeholder = savedRef ? "" : "Paste description tx hash (if shared by seller)";
-
-    if (savedRef) {
-        hashInput.value = savedRef;
-        hashInput.readOnly = true;
-    }
-    row.appendChild(hashInput);
-
     const viewBtn = document.createElement("button");
     viewBtn.type = "button";
     viewBtn.className = "btn btn-ghost btn-sm";
     viewBtn.textContent = "View description";
     viewBtn.addEventListener("click", async () => {
-        const txHash = hashInput.value.trim();
-        if (!txHash) {
-            alert("No tx hash available yet for this listing's description.");
-            return;
-        }
         viewBtn.disabled = true;
         resultEl.hidden = true;
         try {
+            const txHash = await findContentTxHash(listing.id, CONTENT_TYPE_FULL_DESCRIPTION);
+            if (!txHash) {
+                alert("No description found for this listing.");
+                return;
+            }
             const text = await readContentBlob(txHash, {});
             resultEl.textContent = text;
             resultEl.hidden = false;
@@ -823,6 +916,7 @@ function buildDescriptionContentSection(listing) {
 // Function to build a listing card with "buy" or "sell" button depending on the view
 function createListingCardElement(listing, context) {
     const node = listingCardTemplate.content.cloneNode(true);
+    const article = node.querySelector(".listing-card");
 
     node.querySelector(".price").textContent = formatGwei(listing.price);
 
@@ -869,48 +963,73 @@ function createListingCardElement(listing, context) {
         actions.appendChild(buyBtn);
     }
 
-    const contentSection = node.querySelector(".content-section");
-    if (contentSection) {
-        contentSection.replaceWith(buildDescriptionContentSection(listing));
-    }
+    article.appendChild(buildDescriptionContentSection(listing));
 
     return node;
 }
 
 // Function to build the delivery-address block for a buyer's order card
+// Function to build the delivery-address block for a buyer's order card.
+// Checks in the background whether an address was already sent for this
+// order, and shows a confirmation message instead of the form if so.
 function buildDeliveryAddressSendSection(order) {
     const wrapper = document.createElement("div");
     wrapper.className = "content-section";
-    wrapper.style.gridColumn = "1 / -1";
- 
+
+    renderDeliveryAddressSendForm(wrapper, order);
+
+    readContract
+        .getContentBlock(order.id, CONTENT_TYPE_DELIVERY_ADDRESS)
+        .then((blockNumber) => {
+            if (blockNumber !== 0n) {
+                renderDeliveryAddressAlreadySent(wrapper);
+            }
+        })
+        .catch((error) => {
+            console.error("Error checking delivery address status:", error);
+        });
+
+    return wrapper;
+}
+
+// Renders the "already sent" confirmation message inside `wrapper`.
+function renderDeliveryAddressAlreadySent(wrapper) {
+    wrapper.innerHTML = "";
+
     const label = document.createElement("span");
     label.className = "field-label";
-    label.textContent = "Delivery address (sent encrypted to the seller)";
+    label.textContent = "Delivery address :";
     wrapper.appendChild(label);
- 
-    const alreadySent = getContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS);
-    if (alreadySent) {
-        const note = document.createElement("p");
-        note.className = "content-result";
-        note.textContent = `Already sent — tx: ${shortenAddress(alreadySent)}`;
-        wrapper.appendChild(note);
-    }
- 
+
+    const note = document.createElement("p");
+    note.className = "content-result";
+    note.textContent = "You already sent your delivery address for this transaction. Don't forget to confirm receipt once you've received it.";
+    wrapper.appendChild(note);
+}
+
+// Renders the send form (address + signing key + button) inside `wrapper`.
+function renderDeliveryAddressSendForm(wrapper, order) {
     const addressInput = document.createElement("textarea");
-    addressInput.rows = 2;
+    addressInput.rows = 3;
     addressInput.placeholder = "Full name, street, city, postal code, country";
-    wrapper.appendChild(addressInput);
- 
+    wrapper.appendChild(buildLabeledField("Delivery address (sent encrypted to the seller) :", addressInput));
+
     const keyInput = document.createElement("input");
     keyInput.type = "password";
     keyInput.className = "mono";
-    keyInput.placeholder = "Signing key for the blob transaction (testnet only)";
-    wrapper.appendChild(keyInput);
- 
+    keyInput.placeholder = "0x...";
+    wrapper.appendChild(
+        buildLabeledField(
+            "Signing key for the blob transaction (testnet only) :",
+            keyInput,
+            "content-subgroup"
+        )
+    );
+
     const sendBtn = document.createElement("button");
     sendBtn.type = "button";
-    sendBtn.className = "btn btn-primary btn-sm";
-    sendBtn.textContent = alreadySent ? "Send again" : "Send delivery address";
+    sendBtn.className = "btn btn-primary btn-sm content-subgroup";
+    sendBtn.textContent = "Send delivery address";
     sendBtn.addEventListener("click", async () => {
         const address = addressInput.value.trim();
         const key = keyInput.value.trim();
@@ -923,72 +1042,72 @@ function buildDeliveryAddressSendSection(order) {
             const txHash = await sendContentBlob(
                 order.seller,
                 CONTENT_TYPE_DELIVERY_ADDRESS,
+                order.id,
                 address,
                 key,
                 true // always encrypted
             );
             if (txHash) {
-                saveContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS, txHash);
-                alert("Delivery address sent (encrypted) — tx: " + txHash);
-                await refreshBuyerView();
+                renderDeliveryAddressAlreadySent(wrapper);
             }
         } finally {
             sendBtn.disabled = false;
         }
     });
     wrapper.appendChild(sendBtn);
- 
-    return wrapper;
 }
 
 // Function to build the delivery-address block for a seller's order card
 function buildDeliveryAddressReadSection(order) {
     const wrapper = document.createElement("div");
     wrapper.className = "content-section";
-    wrapper.style.gridColumn = "1 / -1";
  
     const label = document.createElement("span");
     label.className = "field-label";
-    label.textContent = "Buyer's delivery address";
+    label.textContent = "Buyer's delivery address :";
     wrapper.appendChild(label);
- 
-    const savedRef = getContentReference("order", order.id.toString(), CONTENT_TYPE_DELIVERY_ADDRESS);
  
     const resultEl = document.createElement("p");
     resultEl.className = "content-result";
     resultEl.hidden = true;
     wrapper.appendChild(resultEl);
  
-    const hashInput = document.createElement("input");
-    hashInput.type = "text";
-    hashInput.className = "mono";
-    hashInput.placeholder = "Paste the tx hash shared by the buyer";
-    if (savedRef) hashInput.value = savedRef;
-    wrapper.appendChild(hashInput);
- 
     const keyInput = document.createElement("input");
     keyInput.type = "password";
     keyInput.className = "mono";
-    keyInput.placeholder = "Your private key (needed to decrypt)";
-    wrapper.appendChild(keyInput);
+    keyInput.placeholder = "0x...";
+    wrapper.appendChild(
+        buildLabeledField(
+            "Your private key (needed to decrypt) :",
+            keyInput,
+            "content-subgroup"
+        )
+    );
  
     const viewBtn = document.createElement("button");
     viewBtn.type = "button";
     viewBtn.className = "btn btn-ghost btn-sm";
     viewBtn.textContent = "Decrypt & view";
     viewBtn.addEventListener("click", async () => {
-        const txHash = hashInput.value.trim();
         const key = keyInput.value.trim();
-        if (!txHash || !key) {
-            alert("Both the tx hash and your private key are required.");
+        if (!key) {
+            alert("Your private key is required to decrypt the delivery address.");
             return;
         }
         viewBtn.disabled = true;
         resultEl.hidden = true;
         try {
+            const txHash = await findContentTxHash(order.id, CONTENT_TYPE_DELIVERY_ADDRESS);
+            if (!txHash) {
+                alert("No delivery address found for this order.");
+                return;
+            }
             const text = await readContentBlob(txHash, { decrypt: true, privateKeyHex: key });
             resultEl.textContent = text;
             resultEl.hidden = false;
+            viewBtn.hidden = true;
+            
+            console.log("Delivery address successfully decoded.");
         } catch (error) {
             console.error("Error reading delivery address blob:", error);
             alert("Error reading delivery address: " + error.message);
@@ -1004,6 +1123,7 @@ function buildDeliveryAddressReadSection(order) {
 // Function to build an order card with "buyer" or "seller" role to display the available actions
 function createOrderCardElement(order, role, listingsMap) {
     const node = orderCardTemplate.content.cloneNode(true);
+    const article = node.querySelector(".order-card");
 
     const listing = listingsMap?.get(order.listingId.toString());
     const label = listing ? listing.metadataRef : `Order #${order.id.toString()}`;
@@ -1052,6 +1172,16 @@ function createOrderCardElement(order, role, listingsMap) {
                 await Promise.all([refreshBuyerView(), refreshSellerView()]);
             });
             actions.appendChild(timeoutBtn);
+        }
+    }
+
+    if (role === "buyer") {
+        if (order.status === 0n) {
+            article.appendChild(buildDeliveryAddressSendSection(order));
+        }
+    } else if (role === "seller") {
+        if (order.status === 0n) {
+            article.appendChild(buildDeliveryAddressReadSection(order));
         }
     }
 
@@ -1161,8 +1291,28 @@ async function refreshBuyerView() {
     await Promise.all([refreshActiveListings(), refreshBuyerOrders()]);
 }
 
+async function refreshPublicKeyStatus() {
+    const statusEl = document.getElementById("publicKeyStatusText");
+    if (!statusEl) return;
+
+    if (!currentAccount) {
+        statusEl.textContent = "Connect your wallet to check your public key registration status.";
+        return;
+    }
+
+    try {
+        const registered = await hasRegisteredPublicKey(currentAccount);
+
+        statusEl.textContent = registered
+            ? "A public key is already registered for your account. Registering a new one will replace it."
+            : "No public key registered yet, buyers won't be able to send you an encrypted delivery address.";
+    } catch (error) {
+        console.error("Error checking public key status:", error);
+    }
+}
+
 async function onAccountReady(account) {
-    await Promise.all([refreshSellerView(), refreshBuyerView(), refreshWalletBalance()]);
+    await Promise.all([refreshSellerView(), refreshBuyerView(), refreshWalletBalance(), refreshPublicKeyStatus()]);
 }
 
 
@@ -1196,7 +1346,6 @@ if (connectMetaMaskButton) {
     connectMetaMaskButton.addEventListener("click", connectMetaMask);
 }
 
-// TODO : add a form for the full description
 const createListingForm = document.getElementById("createListingForm");
 if (createListingForm) {
     createListingForm.addEventListener("submit", async (e) => {
@@ -1214,16 +1363,18 @@ if (createListingForm) {
             const listingId = await createListing(price, metadataRef);
             if (listingId === null || listingId === undefined) return;
 
-            const txHash = await SendContentBlob(
+            await ensurePublicKeyRegistered(blobKey);
+
+            const txHash = await sendContentBlob(
                 currentAccount,
                 CONTENT_TYPE_FULL_DESCRIPTION,
+                listingId,
                 fullDescription,
                 blobKey,
                 false // meant to be public
             );
 
             if (txHash) {
-                saveContentReference("listing", listingId.toString(), CONTENT_TYPE_FULL_DESCRIPTION, txHash);
                 console.log("Full description sent, tx hash: ", txHash);
             }
 
@@ -1279,3 +1430,4 @@ if (contractAddressDisplay) {
 
 // Active listings are public so we load them at the beginning, before connecting the wallet
 refreshActiveListings();
+refreshPublicKeyStatus();
