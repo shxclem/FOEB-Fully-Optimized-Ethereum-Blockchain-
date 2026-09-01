@@ -626,9 +626,23 @@ async function sendContentBlob(receiver, contentType, relatedId, text, privateKe
         }
     }
 
+    // @ethereumjs/util inserts a 0x80 marker byte immediately after the end
+    // of the content to signal the end of the data before padding.
+    // If the total length falls exactly on a multiple of 31 bytes,
+    // this marker becomes the first byte of a new field element—
+    // and 0x80 exceeds the BLS12-381 modulus (which starts with 0x73...),
+    // thereby invalidating the blob. A harmless padding byte at the end
+    // of the payload shifts this case; the reading process already ignores
+    // anything following the length declared in the header, so it is safe.
     function frameForBlob(str) {
         const byteLength = new TextEncoder().encode(str).length;
-        return byteLength.toString(16).padStart(8, "0") + str;
+        let framed = byteLength.toString(16).padStart(8, "0") + str;
+
+        if (new TextEncoder().encode(framed).length % 31 === 0) {
+            framed += " ";
+        }
+        
+        return framed;
     }
 
     payload = frameForBlob(payload);
@@ -713,6 +727,50 @@ function unpackBlobBytes(blobHex) {
     return out;
 }
 
+/// The block containing our transaction is not always exactly at the parent+1 slot, verifying each time that the parent_root matches the one we know
+async function findBeaconSlotForBlock(parentRoot, parentSlot, maxAttempts = 25) {
+    for (let offset = 1; offset <= maxAttempts; offset++) {
+        const candidateSlot = parentSlot + BigInt(offset);
+
+        const resp = await fetch(
+            `${beaconURL}/eth/v2/beacon/blocks/${candidateSlot}`,
+            {
+                headers: { accept: "application/json" },
+            }
+        );
+
+        // Empty slot
+        if (resp.status === 404) {
+            continue;
+        }
+
+        if (!resp.ok) {
+            throw new Error(
+                `Couldn't fetch beacon block at slot ${candidateSlot}: ${resp.status}`
+            );
+        }
+
+        const data = await resp.json();
+        const message = data.data.message;
+
+        // Verifying that the block is the child  of the block we know the parentBeaconBlockRoot
+        if (
+            message.parent_root.toLowerCase() ===
+            parentRoot.toLowerCase()
+        ) {
+            console.log(
+                `Beacon block found : slot ${candidateSlot.toString()}`
+            );
+
+            return candidateSlot;
+        }
+    }
+
+    throw new Error(
+        `Couldn't locate the beacon block after ${maxAttempts} slots.`
+    );
+}
+
 // Function to read the content of a blob transaction given its hash. If decrypt is true, the content will be decrypted using the provided private key.
 async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null } = {}) {
     const tx = await readProvider.getTransaction(txHash);
@@ -740,14 +798,29 @@ async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null }
     };
 
     const blockData = await blockResp.json();
-    const slot = blockData.data.message.slot;
 
-    const nextSlot = BigInt(slot) + 1n;
-    const sidecarResp = await fetch(`${beaconURL}/eth/v1/beacon/blob_sidecars/${nextSlot}`, {
-        headers: { accept: "application/json" },
-    });
+    const parentSlot = BigInt(blockData.data.message.slot);
+
+    console.log("Parent beacon slot:", parentSlot.toString());
+
+    const targetSlot = await findBeaconSlotForBlock(
+        parentRoot,
+        parentSlot
+    );
+
+    console.log("Beacon slot contenant la transaction:", targetSlot.toString());
+
+    const sidecarResp = await fetch(
+        `${beaconURL}/eth/v1/beacon/blob_sidecars/${targetSlot}`,
+        {
+            headers: { accept: "application/json" },
+        }
+    );
+
     if (!sidecarResp.ok) {
-        throw new Error("Couldn't fetch blob sidecars.");
+        throw new Error(
+            `Couldn't fetch blob sidecars for slot ${targetSlot}: ${sidecarResp.status}`
+        );
     }
 
     const sidecarData = await sidecarResp.json();
@@ -1150,15 +1223,24 @@ function createOrderCardElement(order, role, listingsMap) {
     
     if (order.status === 0n) {
         if (role === "buyer") {
-            const confirmBtn = document.createElement("button");
-            confirmBtn.className = "btn btn-primary btn-sm";
-            confirmBtn.textContent = "Confirm Receipt";
-            confirmBtn.addEventListener("click", async () => {
-                confirmBtn.disabled = true;
-                await confirmReceipt(order.id);
-                await refreshBuyerView();
-            });
-            actions.appendChild(confirmBtn);
+            readContract
+                .getContentBlock(order.id, CONTENT_TYPE_DELIVERY_ADDRESS)
+                .then((blockNumber) => {
+                    if (blockNumber === 0n) return; // address not sent yet, no confirm button
+
+                    const confirmBtn = document.createElement("button");
+                    confirmBtn.className = "btn btn-primary btn-sm";
+                    confirmBtn.textContent = "Confirm Receipt";
+                    confirmBtn.addEventListener("click", async () => {
+                        confirmBtn.disabled = true;
+                        await confirmReceipt(order.id);
+                        await refreshBuyerView();
+                    });
+                    actions.appendChild(confirmBtn);
+                })
+                .catch((error) => {
+                    console.error("Error checking delivery address status for confirm button:", error);
+                });
         }
 
         if (isTimeoutClaimable(order)) {
@@ -1402,6 +1484,11 @@ if (withdrawButtonEl) {
 const refreshSellerOrdersButton = document.getElementById("refreshSellerOrders");
 if (refreshSellerOrdersButton) {
     refreshSellerOrdersButton.addEventListener("click", refreshSellerOrders);
+}
+
+const refreshBuyerOrdersButton = document.getElementById("refreshBuyerOrders");
+if (refreshBuyerOrdersButton) {
+    refreshBuyerOrdersButton.addEventListener("click", refreshBuyerOrders);
 }
 
 const refreshMyListingsButton = document.getElementById("refreshMyListings");
