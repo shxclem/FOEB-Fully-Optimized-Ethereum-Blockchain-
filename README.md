@@ -108,6 +108,7 @@ Consensus nodes only keep blobs for about 18 days: older descriptions and delive
 ## Installation and launch
 
 ```bash
+cd sharding
 npm install
 npm run dev
 ```
