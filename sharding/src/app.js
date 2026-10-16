@@ -11,7 +11,7 @@ import { createBlob4844Tx } from "@ethereumjs/tx";
 import { Common, Sepolia, Hardfork } from "@ethereumjs/common";
 import { bytesToHex, hexToBytes } from "@ethereumjs/util";
 import EthCrypto from "eth-crypto";
-
+import { getBlobs } from "@ethereumjs/util";
 
 // ---------------------------- Configuration ----------------------------
 
@@ -305,6 +305,7 @@ async function fetchListingsMap() {
     return new Map(listings.map((listing) => [listing.id.toString(), listing]));
 }
 
+
 // ---------------------------- Seller actions ----------------------------
 
 // Function to create a new listing
@@ -319,8 +320,15 @@ async function createListing(priceGwei, metadataRef) {
     const priceWei = ethers.parseUnits(priceGwei, "gwei");
 
     try {
-        const tx = await writeContract.createListing(priceWei, metadataRef);
-        const receipt = await tx.wait();
+        // Using tools to record metrics
+                const tx = await timeAction(
+            "createListing:submit",
+            () => writeContract.createListing(priceWei, metadataRef),
+            "wallet"
+        );
+        const receipt = await timeAction("createListing:confirm", () => tx.wait(), "network");
+        recordMetric({ label: "createListing:gas", category: "gas", ...extractGasCost(receipt) });
+        recordMetric({ label: "createListing:payloadSize", category: "param", metadataLength: metadataRef.length });
 
         // Get the listingId from the event emitted by the contract
         const event = receipt.logs.map((log) => {
@@ -516,8 +524,7 @@ function derivePublicKeyFromPrivateKey(privateKeyHex) {
 }
 
 // Function to signal the sending of content to `receiver`. It does not currently
-/// carry any actual data: only the on-chain pointer
-/// (contentId, sender, receiver, contentType) is created.
+/// carry any actual data: only the on-chain pointer (contentId, sender, receiver, contentType) is created.
 async function sendContent(receiver, contentType, relatedId) {
     if (!writeContract) {
         alert("Please connect your MetaMask wallet first.");
@@ -562,7 +569,7 @@ async function sendContent(receiver, contentType, relatedId) {
 
 // Browser wallets (MetaMask included) cannot sign blob transactions as of
 // today, so this part is signed manually with a raw private key, entered
-// by the user just for this action — everything else in the app keeps
+// by the user just for this action, everything else in the app keeps
 // using MetaMask normally.
 
 // Function to find which sidecars belong to a transaction given blob sidecars of a beacon slot and blobVersionedHashes of a transaction
@@ -635,13 +642,20 @@ async function sendContentBlob(receiver, contentType, relatedId, text, privateKe
     // of the payload shifts this case; the reading process already ignores
     // anything following the length declared in the header, so it is safe.
     function frameForBlob(str) {
-        const byteLength = new TextEncoder().encode(str).length;
-        let framed = byteLength.toString(16).padStart(8, "0") + str;
+        const originalBytes = new TextEncoder().encode(str);
+        const byteLength = originalBytes.length;
+        const header = byteLength.toString(16).padStart(8, "0");
+
+        const hexContent = Array.from(originalBytes)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("");
+
+        let framed = header + hexContent;
 
         if (new TextEncoder().encode(framed).length % 31 === 0) {
             framed += " ";
         }
-        
+
         return framed;
     }
 
@@ -665,7 +679,11 @@ async function sendContentBlob(receiver, contentType, relatedId, text, privateKe
             transport: http(blobSendRpcURL)
         });
 
-        const transactionCount = await publicClient.getTransactionCount({ address: account.address });
+                const transactionCount = await timeAction(
+            "blobTx:fetchNonce",
+            () => publicClient.getTransactionCount({ address: account.address }),
+            "network"
+        );
 
         const common = new Common({
             chain: Sepolia, 
@@ -688,18 +706,44 @@ async function sendContentBlob(receiver, contentType, relatedId, text, privateKe
             nonce: transactionCount
         };
 
-        const pk = hexToBytes(privateKeyHex);
-        const tx = createBlob4844Tx(txData, { common });
-        const signedTx = tx.sign(pk);
-        const serialized = signedTx.serializeNetworkWrapper();
-
-        const hash = await client.sendRawTransaction({
-            serializedTransaction: bytesToHex(serialized),
+        // Real size of the payload, before padding 
+        // Useful with gasUsed and blobGasUsed when the payload length is varied
+        recordMetric({
+            label: "blobTx:payloadSize",
+            category: "param",
+            payloadByteLength: new TextEncoder().encode(payload).length,
         });
 
+        const pk = hexToBytes(privateKeyHex);
+
+        // Point-in-time diagnosis: isolates packing and commitment.
+        const toHex = (b) => (typeof b === "string" ? b : bytesToHex(b));
+
+        const blobs = await timeAction("diag:packBlobs", () => getBlobs(payload), "local-compute");
+        await timeAction("diag:commitment", () => blobs.map((b) => kzg.blobToKzgCommitment(toHex(b))), "local-compute");
+        await timeAction("diag:cellProofs", () => kzg.computeCellsAndProofs(toHex(blobs[0])), "local-compute");
+        
+        // Local compute : build the tx and sign it, then serialize it to send it to the network
+        const tx = await timeAction("blobTx:buildAndKzg", () => createBlob4844Tx(txData, { common }), "local-compute");
+
+        const signedTx = await timeAction("blobTx:sign", () => tx.sign(pk), "local-compute");
+
+        const serialized = await timeAction("blobTx:serialize", () => signedTx.serializeNetworkWrapper(), "local-compute");
+
+        // Using tools to record metrics
+        const hash = await timeAction(
+            "blobTx:broadcast",
+            () => client.sendRawTransaction({ serializedTransaction: bytesToHex(serialized) }),
+            "network"
+        );
+
         console.log("Blob tx broadcasted, waiting for confirmation:", hash);
-        await publicClient.waitForTransactionReceipt({ hash });
-        const rawTxHex = bytesToHex(serialized);
+        const receipt = await timeAction(
+            "blobTx:confirm",
+            () => publicClient.waitForTransactionReceipt({ hash }),
+            "network"
+        );
+        recordMetric({ label: "blobTx:gas", category: "gas", ...extractGasCost(receipt) });
 
         console.log("Content blob sent, tx hash: ", hash);
         return hash;
@@ -710,7 +754,7 @@ async function sendContentBlob(receiver, contentType, relatedId, text, privateKe
     }
 }
 
-/// Deletes the padding done by @ethereumjs/util when packing the blob
+// Function to delete the padding done by @ethereumjs/util when packing the blob
 function unpackBlobBytes(blobHex) {
     const hex = blobHex.replace(/^0x/, "");
     const raw = new Uint8Array(hex.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
@@ -727,7 +771,7 @@ function unpackBlobBytes(blobHex) {
     return out;
 }
 
-/// The block containing our transaction is not always exactly at the parent+1 slot, verifying each time that the parent_root matches the one we know
+// Function to find the block containing our transaction which is not always exactly at the parent+1 slot
 async function findBeaconSlotForBlock(parentRoot, parentSlot, maxAttempts = 25) {
     for (let offset = 1; offset <= maxAttempts; offset++) {
         const candidateSlot = parentSlot + BigInt(offset);
@@ -773,8 +817,8 @@ async function findBeaconSlotForBlock(parentRoot, parentSlot, maxAttempts = 25) 
 
 // Function to read the content of a blob transaction given its hash. If decrypt is true, the content will be decrypted using the provided private key.
 async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null } = {}) {
-    const tx = await readProvider.getTransaction(txHash);
-    
+    const tx = await timeAction("readBlob:getTransaction", () => readProvider.getTransaction(txHash), "network");
+
     if (!tx) {
         throw new Error("Transaction not found");
     }
@@ -784,69 +828,83 @@ async function readContentBlob(txHash, { decrypt = false, privateKeyHex = null }
         throw new Error("Transaction does not carry any blob");
     }
 
-    const block = await readProvider.getBlock(tx.blockNumber);
+    const block = await timeAction("readBlob:getBlock", () => readProvider.getBlock(tx.blockNumber), "network");
     const parentRoot = block?.parentBeaconBlockRoot;
     if (!parentRoot) {
         throw new Error("Couldn't resolve the parent beacon block root.");
     }
 
-    const blockResp = await fetch(`${beaconURL}/eth/v2/beacon/blocks/${parentRoot}`, {
-        headers: { accept: "application/json" },
-    });
+    const blockResp = await timeAction(
+        "readBlob:fetchParentBeaconBlock",
+        () => fetch(`${beaconURL}/eth/v2/beacon/blocks/${parentRoot}`, { headers: { accept: "application/json" } }),
+        "network"
+    );
     if (!blockResp.ok) {
         throw new Error("Couldn't resolve the beacon slot");
     };
 
     const blockData = await blockResp.json();
-
     const parentSlot = BigInt(blockData.data.message.slot);
 
     console.log("Parent beacon slot:", parentSlot.toString());
 
-    const targetSlot = await findBeaconSlotForBlock(
-        parentRoot,
-        parentSlot
-    );
+    const resolveSlotStart = performance.now();
+    const targetSlot = await findBeaconSlotForBlock(parentRoot, parentSlot);
+    recordMetric({
+        label: "readBlob:resolveSlot",
+        category: "network",
+        durationMs: Math.round(performance.now() - resolveSlotStart),
+        slotOffset: Number(targetSlot - parentSlot), // nombre de slots scannés avant de trouver le bon
+    });
 
     console.log("Beacon slot contenant la transaction:", targetSlot.toString());
 
-    const sidecarResp = await fetch(
-        `${beaconURL}/eth/v1/beacon/blob_sidecars/${targetSlot}`,
-        {
-            headers: { accept: "application/json" },
-        }
+    const sidecarResp = await timeAction(
+        "readBlob:fetchSidecar",
+        () => fetch(`${beaconURL}/eth/v1/beacon/blob_sidecars/${targetSlot}`, { headers: { accept: "application/json" } }),
+        "network"
     );
 
     if (!sidecarResp.ok) {
-        throw new Error(
-            `Couldn't fetch blob sidecars for slot ${targetSlot}: ${sidecarResp.status}`
-        );
+        throw new Error(`Couldn't fetch blob sidecars for slot ${targetSlot}: ${sidecarResp.status}`);
     }
 
     const sidecarData = await sidecarResp.json();
     const blobSidecars = sidecarData.data || [];
 
+    const decodeStart = performance.now();
     const blobsForTx = findBlobsForTx(blobSidecars, blobVersionedHashes);
     const blob = blobsForTx[0];
-    if(!blob) {
+    if (!blob) {
         throw new Error("Couldn't find the blob for this transaction. It may have expired since there is a ~18 days retention.");
     }
 
     const bytes = unpackBlobBytes(blob.blob);
 
-    const headerLength = 8; // 8 caractères hex = longueur du payload en octets
+    const headerLength = 8;
     const headerStr = new TextDecoder("utf-8").decode(bytes.slice(0, headerLength));
-    const payloadByteLength = parseInt(headerStr, 16);
-    const payloadBytes = bytes.slice(headerLength, headerLength + payloadByteLength);
+    const originalByteLength = parseInt(headerStr, 16);
+    const hexPayloadByteLength = originalByteLength * 2;
+
+    const hexBytes = bytes.slice(headerLength, headerLength + hexPayloadByteLength);
+    const hexStr = new TextDecoder("utf-8").decode(hexBytes);
+
+    const payloadBytes = new Uint8Array(
+        hexStr.match(/.{1,2}/g).map((h) => parseInt(h, 16))
+    );
 
     let decoded = new TextDecoder("utf-8").decode(payloadBytes);
+    recordMetric({ label: "readBlob:decode", category: "local-compute", durationMs: Math.round(performance.now() - decodeStart) });
+
     if (decrypt) {
         if (!privateKeyHex) {
             throw new Error("A private key is required to decrypt the content.");
         }
 
+        const decryptStart = performance.now();
         const encryptedObj = EthCrypto.cipher.parse(decoded);
         decoded = await EthCrypto.decryptWithPrivateKey(privateKeyHex, encryptedObj);
+        recordMetric({ label: "readBlob:decrypt", category: "local-compute", durationMs: Math.round(performance.now() - decryptStart) });
     }
 
     return decoded;
@@ -1041,9 +1099,6 @@ function createListingCardElement(listing, context) {
 }
 
 // Function to build the delivery-address block for a buyer's order card
-// Function to build the delivery-address block for a buyer's order card.
-// Checks in the background whether an address was already sent for this
-// order, and shows a confirmation message instead of the form if so.
 function buildDeliveryAddressSendSection(order) {
     const wrapper = document.createElement("div");
     wrapper.className = "content-section";
@@ -1064,7 +1119,7 @@ function buildDeliveryAddressSendSection(order) {
     return wrapper;
 }
 
-// Renders the "already sent" confirmation message inside `wrapper`.
+// Function to render the "already sent" confirmation message inside `wrapper`.
 function renderDeliveryAddressAlreadySent(wrapper) {
     wrapper.innerHTML = "";
 
@@ -1079,7 +1134,7 @@ function renderDeliveryAddressAlreadySent(wrapper) {
     wrapper.appendChild(note);
 }
 
-// Renders the send form (address + signing key + button) inside `wrapper`.
+// Function to render the send form (address + signing key + button) inside `wrapper`.
 function renderDeliveryAddressSendForm(wrapper, order) {
     const addressInput = document.createElement("textarea");
     addressInput.rows = 3;
@@ -1418,6 +1473,109 @@ if (tabSell && tabBuy) {
     tabSell.addEventListener("click", () => activateTab("sell"));
     tabBuy.addEventListener("click", () => activateTab("buy"));
 }
+
+
+// ---------------------------- Metrics ----------------------------
+
+const metrics = [];
+window.metrics = metrics; // Expose metrics to the window for debugging
+
+let currentRunId = 0;
+
+// Function to call manually in the devtools before each new repeated measurement
+// to keep the runs separated
+function startNewRun() {
+    currentRunId++;
+    console.log(`Metrics run #${currentRunId} started.`);
+}
+window.startNewRun = startNewRun;
+
+function recordMetric(entry) {
+    metrics.push({ timestamp: Date.now(), runId: currentRunId, ...entry });
+}
+
+// Function to time any async (or sync) action, with an optional category string
+// ("network", "local-compute", "wallet", "gas", "param"...) to filter later
+async function timeAction(label, fn, category) {
+    const start = performance.now();
+    try {
+        return await fn();
+    } finally {
+        recordMetric({ label, category, durationMs: Math.round(performance.now() - start) });
+    }
+}
+
+// Function to extract gas + cost from a receipt. Note: Ethereum receipts (MetaMask txs) and viem (blob txs) do not expose the effective price under the same name.
+function extractGasCost(receipt) {
+    const gasUsed = receipt.gasUsed;
+    const effectiveGasPrice = receipt.gasPrice ?? receipt.effectiveGasPrice; // ethers vs viem
+    const gasCostWei = gasUsed * effectiveGasPrice;
+
+    let blobCostWei = 0n;
+    if (receipt.blobGasUsed && receipt.blobGasPrice) {
+        blobCostWei = receipt.blobGasUsed * receipt.blobGasPrice;
+    }
+
+    return {
+        gasUsed: gasUsed.toString(),
+        effectiveGasPriceGwei: ethers.formatUnits(effectiveGasPrice, "gwei"),
+        gasCostEth: ethers.formatEther(gasCostWei),
+        blobGasUsed: (receipt.blobGasUsed ?? 0n).toString(),
+        blobCostEth: ethers.formatEther(blobCostWei),
+        totalCostEth: ethers.formatEther(gasCostWei + blobCostWei),
+    };
+}
+
+// Prints the metrics array in a readable table format, grouped by runId and label, with optional filtering by runId.
+function printMetricsTable(runId = currentRunId) {
+    const rows = metrics
+        .filter((m) => m.runId === runId)
+        .map((m) => ({
+            step: m.label,
+            category: m.category ?? "-",
+            "duration (ms)": m.durationMs ?? "-",
+            "gas used": m.gasUsed ?? "-",
+            "gas price (gwei)": m.effectiveGasPriceGwei ? Number(m.effectiveGasPriceGwei).toFixed(2) : "-",
+            "blob cost (ETH)": m.blobCostEth ? Number(m.blobCostEth).toFixed(8) : "-",
+            "total cost (ETH)": m.totalCostEth ? Number(m.totalCostEth).toFixed(6) : "-",
+            "size (bytes)": m.payloadByteLength ?? m.metadataLength ?? "-",
+            "offset slot": m.slotOffset ?? "-",
+        }));
+    console.table(rows);
+}
+window.printMetricsTable = printMetricsTable;
+
+// Gives the average duration of a given label across ALL recorded runs 
+// Useful to compare the average time of a specific action across multiple runs
+function averageDuration(label) {
+    const values = metrics.filter((m) => m.label === label).map((m) => m.durationMs);
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+}
+window.averageDuration = averageDuration;
+
+function averageGasUsed(label) {
+    const values = metrics
+        .filter((m) => m.label === label && m.gasUsed !== undefined)
+        .map((m) => Number(m.gasUsed));
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+}
+window.averageGasUsed = averageGasUsed;
+
+function statsFor(label, field = "durationMs") {
+    const values = metrics
+        .filter((m) => m.label === label && m[field] !== undefined)
+        .map((m) => Number(m[field]));
+    if (!values.length) return null;
+
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+    const stdDev = Math.sqrt(variance);
+
+    return { count: values.length, mean, stdDev, min: Math.min(...values), max: Math.max(...values) };
+}
+window.statsFor = statsFor;
 
 
 // ---------------------------- Event Listeners ----------------------------
