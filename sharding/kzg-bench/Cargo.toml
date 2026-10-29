@@ -1,0 +1,10 @@
+[package]
+name = "kzg-bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
